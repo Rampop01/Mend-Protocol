@@ -1,6 +1,6 @@
 # Mend Protocol
 
-**Autonomous SRE Swarm & Self-Healing Code Defense on NEAR Protocol**
+**Fix production bugs from your phone while you sleep — powered by an autonomous AI swarm & NEAR Protocol.**
 
 [![NEAR Hackathon](https://img.shields.io/badge/NEAR%20Hackathon-Build%20Beyond%20Boundaries-black?style=flat-square&logo=near)](https://near.org)
 [![NEAR Prize Pool](https://img.shields.io/badge/Prize%20Pool-%24250%2C000-00EC97?style=flat-square&logo=near)](https://near.org)

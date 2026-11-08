@@ -1122,24 +1122,20 @@ class MendSwitchOrchestrator:
             chat_id = self.telegram_chat_id or 7259486655
             profile = get_user_profile(chat_id=chat_id, username=sender_name)
             welcome_msg = (
-                f"⚡ <b>MEND PROTOCOL // NEAR AGENT SWARM</b>\n"
+                f"⚡ <b>MEND PROTOCOL</b>\n"
+                f"<b>Fix production bugs from your phone while you sleep.</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                f"Welcome, <b>{sender_name}</b>! Mend turns everyday incident triage into an autonomous self-healing SRE defense powered by NEAR Protocol.\n\n"
-                f"<b>Autonomous Swarm Roster:</b>\n"
-                f"• <code>@mend-recon</code> — Inspects runtime crashes & AST on disk\n"
-                f"• <code>@mend-forge</code> — Synthesizes surgical diffs & runs unittest suites\n"
-                f"• <code>@mend-guard</code> — Security audit, GitHub PR & NEAR bounty release\n\n"
-                f"<b>Connected Environment:</b>\n"
-                f"• <b>Target Repo:</b> <code>{profile['github_repo']}</code>\n"
+                f"Hey <b>{sender_name}</b>! When your production app crashes in the middle of the night, you shouldn't have to get out of bed and open a laptop.\n\n"
+                f"<b>Mend deploys an autonomous AI swarm right here in Telegram:</b>\n"
+                f"1️⃣ <b>Finds the crash</b> — Isolates the exact broken line of code\n"
+                f"2️⃣ <b>Writes the fix</b> — Synthesizes a patch & passes all unit tests\n"
+                f"3️⃣ <b>Ships with 1 tap</b> — Deploys in 0ms, opens a GitHub PR, and pays AI agents on NEAR\n\n"
+                f"<b>Connected Setup:</b>\n"
+                f"• <b>Target Repo:</b> <code>{profile['github_repo']}</code> (send <code>/repo</code> to link yours)\n"
                 f"• <b>NEAR Treasury:</b> <code>{profile['near_account_id']}</code>\n"
-                f"• <b>Network:</b> NEAR Testnet (<code>rpc.testnet.near.org</code>)\n\n"
-                f"<b>Quick Actions (tap keyboard below):</b>\n"
-                f"🚨 <b>Trigger Incident</b> — Induce 500 ZeroDivisionError on checkout\n"
-                f"🧪 <b>Run Test Suite</b> — Execute 4 unittests & AST verification\n"
-                f"🚀 <b>Ship Hotfix</b> — 0ms hot-swap & release NEAR bounty\n"
-                f"🔄 <b>Reset Baseline</b> — Restore vulnerable engine state\n"
-                f"🐙 <b>Connect GitHub</b> — Link personal repository\n"
-                f"Ⓝ <b>NEAR Treasury</b> — Inspect live testnet balance & bounties"
+                f"• <b>Network:</b> NEAR Testnet (Live ✅)\n\n"
+                f"👇 <b>Try the live demo:</b>\n"
+                f"Tap <b>🚨 Trigger Incident</b> below to crash the server and watch the AI swarm fix it in real-time!"
             )
             self.post_room_message(
                 sender_id="mend-core",

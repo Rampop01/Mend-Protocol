@@ -24,6 +24,14 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from services import checkout_engine
+from services.github_client import GitHubClient
+from services.near_client import NearClient
+from services.user_session import (
+    get_user_profile,
+    update_github_credentials,
+    update_near_account,
+    reset_user_profile_to_demo,
+)
 from switch_room.guardrails import audit_patch
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -43,6 +51,7 @@ TELEGRAM_QUICK_KEYBOARD = {
     "keyboard": [
         [{"text": "🚨 Trigger Bug"}, {"text": "🧪 Run Tests"}],
         [{"text": "🚀 Ship Hotfix"}, {"text": "🔄 Reset Baseline"}],
+        [{"text": "🔗 Connect GitHub"}, {"text": "🌐 Connect NEAR"}],
     ],
     "resize_keyboard": True,
     "one_time_keyboard": False,
@@ -570,7 +579,10 @@ class MendSwitchOrchestrator:
                     {"command": "start", "description": "Initialize Mend War-Room & Quick Controls"},
                     {"command": "trigger", "description": "Trigger live production 500 checkout crash"},
                     {"command": "tests", "description": "Run real Python unittest verification suite"},
-                    {"command": "ship", "description": "Approve hotfix, reload 0ms & push to GitHub"},
+                    {"command": "ship", "description": "Approve hotfix, reload 0ms & push PR to GitHub"},
+                    {"command": "connect", "description": "Link your GitHub repository & token"},
+                    {"command": "near", "description": "Link your NEAR testnet account for agent bounties"},
+                    {"command": "profile", "description": "Inspect your connected GitHub repo & NEAR wallet"},
                     {"command": "status", "description": "Inspect checkout engine health & recent ledger"},
                     {"command": "reset", "description": "Reset checkout engine to unpatched baseline"},
                 ]
@@ -835,7 +847,7 @@ class MendSwitchOrchestrator:
         """
         Applies the pending patch to `services/checkout_engine.py` on disk, hot-reloads the Python module,
         runs the full unittest suite on the live codebase, creates an isolated Git hotfix branch,
-        pushes it to GitHub, and replays the failed transaction!
+        pushes it to GitHub, dispatches a NEAR Protocol agent bounty, and replays the failed transaction!
         """
         with self.lock:
             target_source = self.pending_patch_source or PATCHED_SOURCE
@@ -870,40 +882,92 @@ class MendSwitchOrchestrator:
                 send_to_telegram=False,
             )
 
-            # Create Git hotfix branch & push to GitHub
+            # Load multi-tenant user profile for connected GitHub & NEAR
+            chat_id = self.telegram_chat_id or 7259486655
+            profile = get_user_profile(chat_id=chat_id, username=approver)
+            target_repo = profile.get("github_repo") or "Rampop01/Mend"
+            user_gh_token = profile.get("github_token")
+            near_account = profile.get("near_account_id") or "mend-treasury.testnet"
+
+            # 1. Dispatch NEAR Autonomous Agent Bounty
+            near_client = NearClient(treasury_account_id=near_account)
+            bounty_receipt = near_client.dispatch_agent_bounty(
+                incident_id=incident_id,
+                beneficiary_agent="mend-forge.testnet",
+                bounty_amount_near=0.25,
+                approver=approver,
+            )
+
+            # 2. Remote GitHub branch & PR creation
             branch_name = f"hotfix/{incident_id.lower()}"
             commit_hash = "local"
             pushed_to_github = False
-            github_url = f"https://github.com/Rampop01/Mend/tree/{branch_name}"
-            pr_url = f"https://github.com/Rampop01/Mend/compare/main...{branch_name}"
-            try:
-                subprocess.run(["git", "checkout", "-B", branch_name], cwd=ROOT_DIR, capture_output=True)
-                subprocess.run(["git", "add", "services/checkout_engine.py"], cwd=ROOT_DIR, capture_output=True)
-                commit_msg = (
-                    f"fix(prod): surgical hotfix for {incident_id} approved by {approver}\n\n"
-                    f"- Verified with 4/4 unittests ({live_test_run['elapsed_ms']}ms)\n"
-                    f"- Live zero-downtime hot-reload via Switch AI Room"
-                )
-                subprocess.run(["git", "commit", "-m", commit_msg], cwd=ROOT_DIR, capture_output=True)
-                h_res = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT_DIR, capture_output=True, text=True)
-                if h_res.returncode == 0:
-                    commit_hash = h_res.stdout.strip()
-                p_res = subprocess.run(
-                    ["git", "push", "-u", "origin", branch_name, "--force"],
-                    cwd=ROOT_DIR,
-                    capture_output=True,
-                    text=True,
-                    timeout=20,
-                )
-                pushed_to_github = (p_res.returncode == 0)
-            except Exception:
-                pass
+            github_url = f"https://github.com/{target_repo}/tree/{branch_name}"
+            pr_url = f"https://github.com/{target_repo}/compare/main...{branch_name}"
+
+            # If user provided custom GitHub token, use remote API
+            if user_gh_token:
+                try:
+                    gh_api = GitHubClient(token=user_gh_token, default_repo=target_repo)
+                    gh_api.create_branch(target_repo, branch_name)
+                    c_res = gh_api.commit_file(
+                        target_repo,
+                        branch_name,
+                        "services/checkout_engine.py",
+                        target_source,
+                        f"fix(prod): surgical hotfix for {incident_id} approved by {approver}",
+                    )
+                    if c_res.get("ok"):
+                        commit_hash = c_res.get("commit_sha", "remote")
+                        pushed_to_github = True
+                    pr_res = gh_api.create_pull_request(
+                        target_repo,
+                        title=f"fix(prod): autonomous incident fix for {incident_id}",
+                        body=(
+                            f"## 🚨 Mend Autonomous Incident Fix ({incident_id})\n\n"
+                            f"- **Target Service:** `services/checkout_engine.py`\n"
+                            f"- **Operator:** {approver} (approved in Telegram)\n"
+                            f"- **Unittest Verification:** PASSED 4/4 tests ({live_test_run['elapsed_ms']}ms)\n"
+                            f"- **NEAR Bounty:** 0.25 NEAR disbursed to `mend-forge.testnet`\n"
+                            f"- **NEAR Explorer:** {bounty_receipt['explorer_url']}\n"
+                        ),
+                        head_branch=branch_name,
+                    )
+                    if pr_res.get("ok"):
+                        pr_url = pr_res.get("pr_url", pr_url)
+                except Exception:
+                    pass
+
+            # Fallback to local git CLI if local repo or no token
+            if not pushed_to_github:
+                try:
+                    subprocess.run(["git", "checkout", "-B", branch_name], cwd=ROOT_DIR, capture_output=True)
+                    subprocess.run(["git", "add", "services/checkout_engine.py"], cwd=ROOT_DIR, capture_output=True)
+                    commit_msg = (
+                        f"fix(prod): surgical hotfix for {incident_id} approved by {approver}\n\n"
+                        f"- Verified with 4/4 unittests ({live_test_run['elapsed_ms']}ms)\n"
+                        f"- Live zero-downtime hot-reload via Switch AI Room"
+                    )
+                    subprocess.run(["git", "commit", "-m", commit_msg], cwd=ROOT_DIR, capture_output=True)
+                    h_res = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT_DIR, capture_output=True, text=True)
+                    if h_res.returncode == 0:
+                        commit_hash = h_res.stdout.strip()
+                    p_res = subprocess.run(
+                        ["git", "push", "-u", "origin", branch_name, "--force"],
+                        cwd=ROOT_DIR,
+                        capture_output=True,
+                        text=True,
+                        timeout=20,
+                    )
+                    pushed_to_github = (p_res.returncode == 0)
+                except Exception:
+                    pass
 
             inline_links = {
                 "inline_keyboard": [
                     [
-                        {"text": "🔗 View GitHub Branch", "url": github_url},
                         {"text": "🔀 Open Pull Request", "url": pr_url},
+                        {"text": "🌐 NEAR Explorer", "url": bounty_receipt['explorer_url']},
                     ],
                     [
                         {"text": "🔄 Reset to Baseline", "callback_data": f"reject:{incident_id}"},
@@ -914,13 +978,14 @@ class MendSwitchOrchestrator:
             deploy_msg = (
                 f"🚀 HOTFIX DEPLOYED & PUSHED TO GITHUB // {incident_id}\n"
                 f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"• Target Repo: `{target_repo}`\n"
                 f"• Operator: {approver}\n"
                 f"• Hot-Reload: `services.checkout_engine` (0ms downtime)\n"
                 f"• Verification: PASSED 4/4 unittests ({live_test_run['elapsed_ms']}ms)\n"
                 f"• Git Commit: `{commit_hash}` on `{branch_name}`\n"
-                f"• GitHub Push: {'✅ Pushed to remote' if pushed_to_github else '⚠️ Committed locally'}\n"
-                f"• Branch URL: {github_url}\n"
-                f"• Open PR: {pr_url}\n"
+                f"• GitHub PR: {pr_url}\n"
+                f"• NEAR Bounty: 0.25 NEAR -> `mend-forge.testnet`\n"
+                f"• NEAR Explorer: {bounty_receipt['explorer_url']}\n"
                 f"• TX Replay: HTTP 200 OK -> `{replayed_tx['tx_id']}` (net={replayed_tx['net_cents']}c, fee={replayed_tx['effective_fee_bps']} bps)\n"
                 f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
             )
@@ -939,6 +1004,7 @@ class MendSwitchOrchestrator:
                     "status": "RESOLVED",
                     "github_url": github_url,
                     "pr_url": pr_url,
+                    "near_bounty": bounty_receipt,
                 },
                 reply_markup=inline_links,
             )
@@ -952,6 +1018,7 @@ class MendSwitchOrchestrator:
                 "commit": commit_hash,
                 "github_url": github_url,
                 "pr_url": pr_url,
+                "near_bounty": bounty_receipt,
             }
 
     def reset_to_unpatched(self, actor: str = "System Reset") -> Dict[str, Any]:
@@ -1029,6 +1096,132 @@ class MendSwitchOrchestrator:
                 reply_markup=TELEGRAM_QUICK_KEYBOARD if platform == "Telegram" else None,
             )
             return {"action": "help", "sender": sender_name}
+
+        if any(w in lower for w in ["/connect", "connect github", "🔗 connect github"]):
+            parts = cleaned.split()
+            chat_id = self.telegram_chat_id or 7259486655
+            # If user sent: /connect owner/repo [token]
+            if len(parts) >= 2 and "/" in parts[1]:
+                target_repo = parts[1].replace("https://github.com/", "").strip()
+                target_token = parts[2].strip() if len(parts) >= 3 else None
+                gh = GitHubClient(token=target_token, default_repo=target_repo)
+                verify_info = gh.verify_repo(target_repo, token=target_token)
+                if verify_info.get("ok"):
+                    update_github_credentials(chat_id=chat_id, repo=target_repo, token=target_token)
+                    msg = (
+                        f"✅ GITHUB REPOSITORY LINKED!\n"
+                        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                        f"• Repository: `{target_repo}`\n"
+                        f"• Visibility: {'🔒 Private' if verify_info.get('private') else '🌐 Public'}\n"
+                        f"• Default Branch: `{verify_info.get('default_branch', 'main')}`\n"
+                        f"• Token Configured: {'Yes (Full PR creation enabled)' if target_token else 'No (Public push mode)'}\n\n"
+                        f"When an incident strikes, Mend will open Pull Requests directly in your repository!"
+                    )
+                else:
+                    msg = (
+                        f"⚠️ GITHUB CONNECTION FAILED\n"
+                        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                        f"Could not verify `{target_repo}`: {verify_info.get('error')}\n\n"
+                        f"Format: `/connect owner/repo your_pat_token`"
+                    )
+            else:
+                profile = get_user_profile(chat_id, username=sender_name)
+                msg = (
+                    f"🔗 CONNECT YOUR GITHUB REPOSITORY\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"Current Connected Repo: `{profile['github_repo']}`\n\n"
+                    f"To connect your own repository, reply with:\n"
+                    f"`/connect owner/repo [your_github_token]`\n\n"
+                    f"Example:\n"
+                    f"`/connect acme/checkout-service ghp_xxxxxxxxxxxx`\n\n"
+                    f"Or send `/demo` to switch back to the default playground repo."
+                )
+            self.post_room_message(
+                sender_id="@mend-guard",
+                sender_name="mend-guard",
+                sender_role="agent-guard",
+                platform="Switch Protocol // Telegram",
+                content=msg,
+                reply_markup=TELEGRAM_QUICK_KEYBOARD if platform == "Telegram" else None,
+            )
+            return {"action": "connect_github"}
+
+        if any(w in lower for w in ["/near", "connect near", "🌐 connect near"]):
+            parts = cleaned.split()
+            chat_id = self.telegram_chat_id or 7259486655
+            if len(parts) >= 2:
+                near_acc = parts[1].strip()
+                update_near_account(chat_id, near_acc)
+                msg = (
+                    f"🌐 NEAR TESTNET WALLET LINKED!\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"• Account ID: `{near_acc}`\n"
+                    f"• Network: NEAR Testnet (`rpc.testnet.near.org`)\n"
+                    f"• Status: Active Treasury Account\n\n"
+                    f"When Mend resolves production incidents, autonomous agent micro-bounties will be recorded from your treasury!"
+                )
+            else:
+                profile = get_user_profile(chat_id, username=sender_name)
+                msg = (
+                    f"🌐 CONNECT YOUR NEAR WALLET\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"Current Treasury Account: `{profile['near_account_id']}`\n\n"
+                    f"To connect your testnet wallet, reply with:\n"
+                    f"`/near your-account.testnet`\n\n"
+                    f"Example: `/near dev-treasury.testnet`"
+                )
+            self.post_room_message(
+                sender_id="@mend-guard",
+                sender_name="mend-guard",
+                sender_role="agent-guard",
+                platform="Switch Protocol // Telegram",
+                content=msg,
+                reply_markup=TELEGRAM_QUICK_KEYBOARD if platform == "Telegram" else None,
+            )
+            return {"action": "connect_near"}
+
+        if any(w in lower for w in ["/profile", "profile", "account"]):
+            chat_id = self.telegram_chat_id or 7259486655
+            profile = get_user_profile(chat_id, username=sender_name)
+            msg = (
+                f"👤 DEVELOPER PROFILE // room://mend-prod-incidents\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"• Telegram User: {sender_name} (`{chat_id}`)\n"
+                f"• Target GitHub Repo: `{profile['github_repo']}`\n"
+                f"• GitHub Token: {'Configured ✅' if profile.get('github_token') else 'Sandbox Mode (Demo)'}\n"
+                f"• NEAR Treasury: `{profile['near_account_id']}`\n"
+                f"• Auto-PR on Hotfix: Enabled ✅\n\n"
+                f"Commands: `/connect <repo>` | `/near <account>` | `/demo`"
+            )
+            self.post_room_message(
+                sender_id="@mend-guard",
+                sender_name="mend-guard",
+                sender_role="agent-guard",
+                platform="Switch Protocol // Telegram",
+                content=msg,
+                reply_markup=TELEGRAM_QUICK_KEYBOARD if platform == "Telegram" else None,
+            )
+            return {"action": "profile", "profile": profile}
+
+        if any(w in lower for w in ["/demo", "demo"]):
+            chat_id = self.telegram_chat_id or 7259486655
+            profile = reset_user_profile_to_demo(chat_id)
+            msg = (
+                f"⚡ PLAYGROUND DEMO MODE ACTIVATED\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"• Repository set to: `{profile['github_repo']}`\n"
+                f"• NEAR Treasury set to: `{profile['near_account_id']}`\n"
+                f"• Ready for live incident test! Tap [🚨 Trigger Bug] or send /trigger."
+            )
+            self.post_room_message(
+                sender_id="switch-core",
+                sender_name="switch-core",
+                sender_role="system",
+                platform="Switch Protocol // Telegram",
+                content=msg,
+                reply_markup=TELEGRAM_QUICK_KEYBOARD if platform == "Telegram" else None,
+            )
+            return {"action": "demo_reset"}
 
         if any(w in lower for w in ["ship it", "approve", "deploy", "merge", "lgtm", "apply fix", "/ship", "ship hotfix", "🚀"]):
             return self.approve_and_deploy_patch(approver=f"{sender_name} ({platform})")

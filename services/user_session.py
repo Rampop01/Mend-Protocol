@@ -10,9 +10,9 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-DB_PATH = Path(__file__).resolve().parent.parent / "data" / "switch_room.db"
+DB_PATH = Path(__file__).resolve().parent.parent / "data" / "mend_protocol.db"
 
-DEFAULT_REPO = "Rampop01/Mend"
+DEFAULT_REPO = "Rampop01/mend-protocol"
 DEFAULT_NEAR_ACCOUNT = "mend-treasury.testnet"
 
 
@@ -115,3 +115,4 @@ def reset_user_profile_to_demo(chat_id: int) -> Dict[str, Any]:
         )
         conn.commit()
     return get_user_profile(chat_id)
+

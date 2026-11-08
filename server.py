@@ -68,7 +68,7 @@ def telegram_polling_loop() -> None:
                     ack_url = f"https://api.telegram.org/bot{token}/answerCallbackQuery"
                     ack_payload = json.dumps({
                         "callback_query_id": cb_id,
-                        "text": "Mend Switch Room processing action...",
+                        "text": "Mend Swarm processing on NEAR...",
                     }).encode("utf-8")
                     urllib.request.urlopen(
                         urllib.request.Request(
@@ -238,16 +238,16 @@ class MendRequestHandler(BaseHTTPRequestHandler):
         self._send_json(404, {"ok": False, "error": "Not found"})
 
 
-def run_server(port: int = 8765) -> None:
+def run_server(port: int = 8770) -> None:
     checkout_engine.init_db()
     poller = threading.Thread(target=telegram_polling_loop, daemon=True)
     poller.start()
     server = ThreadingHTTPServer(("127.0.0.1", port), MendRequestHandler)
-    print(f"Mend Switch Room & Checkout Server listening on http://127.0.0.1:{port}")
+    print(f"Mend Protocol // NEAR Swarm Engine listening on http://127.0.0.1:{port}")
     server.serve_forever()
 
 
 if __name__ == "__main__":
     import importlib
-    port = int(os.environ.get("PORT", "8765"))
+    port = int(os.environ.get("PORT", "8770"))
     run_server(port=port)

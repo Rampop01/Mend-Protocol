@@ -1,194 +1,149 @@
-# Mend
+# Mend Protocol
 
-**Autonomous Multi-Agent Incident Forensics & Live Hotfix Room on Switch AI + Telegram**
+**Autonomous SRE Swarm & Self-Healing Code Defense on NEAR Protocol**
 
-[![Hackathon](https://img.shields.io/badge/Flip%20the%20Switch-WeMakeDevs%20%C3%97%20DevTools%20Academy-black?style=flat-square)](https://www.wemakedevs.org/hackathons/switch)
-[![Track](https://img.shields.io/badge/Track-Best%20Business%20Workflow-black?style=flat-square)](https://www.wemakedevs.org/hackathons/switch)
-[![Switch Protocol](https://img.shields.io/badge/Switch%20AI-Room%20Protocol-black?style=flat-square)](https://github.com/sandbox-quantum/switch)
-[![Telegram](https://img.shields.io/badge/Telegram-@mend__switch__bot-blue?style=flat-square)](https://t.me/mend_switch_bot)
-[![Video Demo](https://img.shields.io/badge/Loom-Walkthrough%20Video-orange?style=flat-square)](https://www.loom.com/share/2f8163a7cc5c4f3ea2e3913a704dac23)
-
----
-
-## 📺 Live Video Walkthrough
-
-**Watch the full 2-minute live demo on Loom:**  
-👉 **[https://www.loom.com/share/2f8163a7cc5c4f3ea2e3913a704dac23](https://www.loom.com/share/2f8163a7cc5c4f3ea2e3913a704dac23)**
+[![NEAR Hackathon](https://img.shields.io/badge/NEAR%20Hackathon-Build%20Beyond%20Boundaries-black?style=flat-square&logo=near)](https://near.org)
+[![NEAR Prize Pool](https://img.shields.io/badge/Prize%20Pool-%24250%2C000-00EC97?style=flat-square&logo=near)](https://near.org)
+[![Track](https://img.shields.io/badge/Track-AI%20Swarms%20%26%20Agent%20Economy-black?style=flat-square)](https://near.org)
+[![Telegram Bot](https://img.shields.io/badge/Telegram-@mend__protocol__bot-blue?style=flat-square&logo=telegram)](https://t.me/mend_protocol_bot)
+[![Network](https://img.shields.io/badge/Network-NEAR%20Testnet-00EC97?style=flat-square)](https://testnet.nearblocks.io)
+[![Python](https://img.shields.io/badge/Python-3.9%2B-blue?style=flat-square&logo=python)](https://python.org)
 
 ---
 
-## What is Mend?
+## ⚡ Executive Summary
 
-When a production API or website crashes in the middle of the night, engineering teams face a painful reality:
-1. Monitoring tools (like Sentry or Datadog) only **alert** you that something broke—they cannot fix it.
-2. AI coding assistants (like Claude Code or Cursor) are trapped inside an engineer's **laptop terminal**. If you are away from your computer, in bed, or in transit, they are useless.
-3. Every minute of downtime costs revenue, user trust, and team sanity.
+Production outages cost internet businesses billions every year. Modern observability platforms (Datadog, Sentry, PagerDuty) only **alert** humans when code breaks. Meanwhile, developer coding agents (Claude Code, Cursor) remain trapped inside local developer laptop terminals.
 
-**Mend** bridges this gap using the **Switch AI Room Protocol**. 
-
-Instead of isolating AI agents on a developer's machine, Mend deploys **three specialized AI teammates into a shared Telegram room (`@mend_switch_bot`)**. When a runtime crash occurs in production, the agents isolate the bug, write the code fix, test it, and present the on-call engineer with a one-tap approval button right on their phone.
+**Mend Protocol** introduces an **Autonomous SRE Swarm powered by NEAR Protocol**:
+1. **Multi-Agent Coordination Swarm**: A coordinated pipeline of specialized agents (`@mend-recon`, `@mend-forge`, `@mend-guard`) triage crashes, perform AST stack forensics, synthesize surgical Git patches, and execute real unit test suites in sandboxes.
+2. **On-Chain Agent Economy & Treasury**: Powered by **NEAR Protocol**, repository owners lock autonomous micro-bounties in escrow. When an agent swarm successfully repairs a production bug and passes 100% of unit tests, the bounty (0.25 NEAR) is automatically disbursed on-chain and registered with an immutable transaction digest on NEAR Testnet (`testnet.nearblocks.io`).
+3. **Multi-Tenant GitHub Integration**: Anyone can connect their own repository in Telegram via `/repo owner/repo [token]`. Mend will create dedicated remote hotfix branches, commit AST-verified patches, and automatically open Pull Requests with full forensic reports.
+4. **Mobile-First Telegram HUD (`@mend_protocol_bot`)**: Real-time in-place status cards with expandable code blockquotes (`<blockquote expandable>`), zero-downtime hot-reloading, and one-tap mobile approval buttons.
 
 ---
 
-## How It Works: The Multi-Agent Pipeline
+## 🏗 Architecture & Agent Pipeline
 
 ```
-  [ Production Service Crashes ]
-                 │
-                 ▼ (Unhandled HTTP 500)
-    ┌───────────────────────────┐
-    │  @mend-recon              │  Parses stack frames & Python Abstract Syntax
-    │  (Forensics & AST Agent)  │  Tree (AST) on disk to locate the exact crashing line.
-    └────────────┬──────────────┘
-                 │
-                 ▼ (Hands off root-cause context)
-    ┌───────────────────────────┐
-    │  @mend-forge              │  Synthesizes a minimal unified git diff and executes
-    │  (Patch & Test Agent)     │  the full unittest suite (proving 4/4 passing tests).
-    └────────────┬──────────────┘
-                 │
-                 ▼ (Hands off candidate diff)
-    ┌───────────────────────────┐
-    │  @mend-guard              │  Runs Switch Trust security guardrails (syntax checks,
-    │  (Safety & Deploy Agent)  │  no dynamic code execution, DLP token scans, blast radius).
-    └────────────┬──────────────┘
-                 │
-                 ▼ (Presents inline approval card on mobile)
-    ┌───────────────────────────┐
-    │  Human Operator           │  Reviews diff on Telegram and taps:
-    │  (Telegram Mobile / Web)  │  [ ✅ Approve & Push Hotfix ]
-    └────────────┬──────────────┘
-                 │
-                 ├───────────────────────────────┐
-                 ▼                               ▼
-    ┌───────────────────────────┐   ┌───────────────────────────┐
-    │  Zero-Downtime Hot-Reload │   │  Automated Git & GitHub   │
-    │  In-memory module reload  │   │  Creates `hotfix/INC-xxx` │
-    │  Replays failed HTTP req  │   │  Commits verified patch   │
-    │  Settles SQLite ledger    │   │  Pushes branch to GitHub  │
-    └───────────────────────────┘   │  Generates one-click PR   │
-                                    └───────────────────────────┘
-```
-
----
-
-## The Three Switch Agents
-
-| Agent | Role | Responsibility |
-| :--- | :--- | :--- |
-| **`@mend-recon`** | Forensics & AST Inspector | Intercepts unhandled exceptions (`ZeroDivisionError`, `KeyError`, etc.), inspects the live Python AST and stack frames on disk, and extracts the exact failing line and request payload. |
-| **`@mend-forge`** | Surgical Patch & Test Runner | Generates the minimal git diff fixing the root cause, and runs `python3 -m unittest discover -s tests -v` in an isolated sandbox before and after patching (`0/4` → `4/4` passing). |
-| **`@mend-guard`** | Switch Trust & Deployment Gate | Audits candidate code against Switch Trust security guardrails (clean syntax, 0 forbidden dynamic execution calls like `eval`/`os.system`, no leaked secrets, blast radius <= 45 LOC), and gates hot-reloads behind explicit human approval in Telegram. |
-
----
-
-## Key Features
-
-- **Real Execution (Zero Mock Data)**: Every action in Mend operates on real code, real Python AST parsing, real `difflib` unified diffs, real `unittest` runs, and a real SQLite database.
-- **Automated Git Branch & Remote GitHub Push**: Upon human approval, `@mend-guard` creates an isolated Git branch (`hotfix/INC-xxxxx`), commits the verified patch with test metadata, pushes the branch to GitHub, and provides immediate clickable links to review the branch and open a Pull Request.
-- **Native Telegram Bot UI & Quick Controls**: Full ChatOps integration on `@mend_switch_bot` featuring registered native `/` commands and a persistent interactive keyboard (`[🚨 Trigger Bug]`, `[🧪 Run Tests]`, `[🚀 Ship Hotfix]`, `[🔄 Reset Baseline]`) so anyone can operate the incident room from their phone without memorizing commands.
-- **Two-Way Synchronization**: Messages sent in Telegram appear instantly on the web developer console, and console commands stream back to Telegram.
-- **Switch Template Compatibility**: Includes official Switch v1 YAML templates (`templates/mend-incident-warroom.template.yaml` and `templates/mend-hotfix-workroom.template.yaml`) ready to import directly into the **Switch Console** desktop application.
-- **Voice-Enabled (Code with Wispr)**: Supports voice commands (`"trigger bug"`, `"run tests"`, `"ship it"`) via microphone or Wispr Flow.
-
----
-
-## 📱 Telegram Bot Controls (`@mend_switch_bot`)
-
-When you open **`@mend_switch_bot`**, the bot provides interactive buttons attached directly to your chat bar, plus native slash commands:
-
-| Command / Button | Action | What Happens Under the Hood |
-| :--- | :--- | :--- |
-| **`/start`** | Initialize War-Room | Displays agent roster (`@mend-recon`, `@mend-forge`, `@mend-guard`) and activates the persistent quick-reply keyboard. |
-| **`🚨 Trigger Bug`** (`/trigger`) | Induce 500 Crash | Executes a 100% discount promo voucher against `services/checkout_engine.py`, triggering a real `ZeroDivisionError`. The 3 agents immediately swarm the incident. |
-| **`🧪 Run Tests`** (`/tests`) | Run Regression Suite | Dispatches `@mend-forge` to run `python3 -m unittest discover -s tests -v` in real time, displaying test execution times and assertion outputs. |
-| **`🚀 Ship Hotfix`** (`/ship`) | Deploy & Push | Dispatches `@mend-guard` to hot-reload `checkout_engine.py` in-memory (0ms downtime), commit the patch to a new `hotfix/INC-xxxxx` branch, push it to GitHub, and replay the failed transaction to settle the ledger. |
-| **`📊 /status`** | Health & Ledger | Inspects current checkout engine code state (patched vs baseline), active incident, and recent SQLite transactions. |
-| **`🔄 Reset Baseline`** (`/reset`) | Reset Baseline | Resets `checkout_engine.py` to its unpatched state and checks out `main`, allowing judges and engineers to test the failure flow repeatedly. |
-
----
-
-## Project Structure
-
-```
-mend/
-├── server.py                        # Threaded HTTP backend + Telegram Bot API polling daemon
-├── services/
-│   └── checkout_engine.py           # Target production microservice backed by SQLite
-├── switch_room/
-│   ├── orchestrator.py              # Mend multi-agent orchestrator & room state manager
-│   └── guardrails.py                # Switch Trust AST & DLP security audit engine
-├── tests/
-│   └── test_checkout_engine.py      # Real unittest regression suite (4 tests)
-├── templates/
-│   ├── mend-incident-warroom.template.yaml  # Official Switch Console room template
-│   └── mend-hotfix-workroom.template.yaml  # Official Switch Console hotfix template
-├── web/
-│   └── index.html                   # High-contrast monochrome developer command center
-├── data/                            # Persistent SQLite storage (production ledger + room messages)
-└── scripts/
-    ├── render_demo_video.py         # Automated walkthrough and screenshot pipeline
-    └── encode_mp4.m                 # Native macOS AVFoundation 1080p MP4 encoder
+  [ Production Web Service / API Crashes ]
+                     │
+                     ▼ (Unhandled HTTP 500)
+    ┌──────────────────────────────────┐
+    │  @mend-recon                     │  Parses runtime stack frames & Python Abstract Syntax
+    │  (AST & Stack Forensics Agent)   │  Tree (AST) on disk to pinpoint crashing statement.
+    └────────────────┬─────────────────┘
+                     │
+                     ▼ (Hands off root-cause context)
+    ┌──────────────────────────────────┐
+    │  @mend-forge                     │  Synthesizes minimal unified git diff and executes
+    │  (Patch & Unittest Agent)        │  the real unittest suite (proves 4/4 passing tests).
+    └────────────────┬─────────────────┘
+                     │
+                     ▼ (Hands off candidate diff)
+    ┌──────────────────────────────────┐
+    │  @mend-guard                     │  Runs Security Guardrails (AST security gate, DLP
+    │  (Safety & On-Chain Agent)       │  secret check, blast radius) + Locks 0.25 NEAR Bounty.
+    └────────────────┬─────────────────┘
+                     │
+                     ▼ (Presents interactive HUD card on Telegram)
+    ┌──────────────────────────────────┐
+    │  On-Call Human Operator          │  Reviews diff & test run on Telegram and taps:
+    │  (@mend_protocol_bot)            │  [ 🚀 Approve & Release NEAR Bounty ]
+    └────────────────┬─────────────────┘
+                     │
+                     ├───────────────────────────────────────────────┐
+                     ▼ (0ms Hot-Swap)                                ▼ (On-Chain Bounty)
+    ┌──────────────────────────────────┐           ┌──────────────────────────────────┐
+    │  In-Memory Hot Reload            │           │  NEAR Testnet RPC                │
+    │  - Python AST reloaded live      │           │  - 0.25 NEAR bounty disbursed    │
+    │  - Failed transaction replayed   │           │  - On-chain proof registered     │
+    │  - Zero production downtime      │           │  - Viewable on NearBlocks        │
+    └──────────────────────────────────┘           └──────────────────────────────────┘
+                     │
+                     ▼
+    ┌──────────────────────────────────┐
+    │  Remote GitHub Push & PR         │
+    │  - Creates branch: `hotfix/inc-*`│
+    │  - Commits verified surgical fix │
+    │  - Opens Pull Request with tests │
+    └──────────────────────────────────┘
 ```
 
 ---
 
-## Quickstart (Run it Locally in 60 Seconds)
+## Ⓝ NEAR Protocol Integration
 
-### 1. Prerequisites
-- macOS or Linux with **Python 3.9+**
-- (Optional) A Telegram Bot Token from [@BotFather](https://t.me/BotFather)
+Mend Protocol directly leverages NEAR Testnet:
+- **Live RPC Integration**: Connects via `https://rpc.testnet.near.org` to poll block heights, network sync, and validator states.
+- **Autonomous Agent Bounties**: When an incident occurs, a micro-bounty intent (0.25 NEAR) is calculated based on incident complexity.
+- **On-Chain Verification Receipt**: When the human approves the fix, the bounty is finalized with a cryptographically signed transaction hash linkable on the NEAR block explorer (`https://testnet.nearblocks.io/tx/<tx_hash>`).
+- **Autonomous Treasury Account**: Configurable per user (`/near <account_id>.testnet`) so individual developers or enterprises can fund self-healing agents from their own DAO or multisig treasury.
 
-### 2. Clone & Setup
+---
+
+## 🚀 Quickstart & Telegram Bot
+
+### 1. Chat with Live Bot
+Open Telegram and start the bot:  
+👉 **[@mend_protocol_bot](https://t.me/mend_protocol_bot)**
+
+Available commands & keyboard controls:
+| Command | Button | Description |
+|---|---|---|
+| `/start` | — | Initialize Mend Swarm & inspect environment |
+| `/trigger` | 🚨 Trigger Incident | Simulate production 500 runtime crash |
+| `/tests` | 🧪 Run Test Suite | Execute sandbox unittest suite & AST checks |
+| `/ship` | 🚀 Ship Hotfix | Deploy 0ms hot-swap & release NEAR bounty |
+| `/reset` | 🔄 Reset Baseline | Restore unpatched baseline to test again |
+| `/repo` | 🐙 Connect GitHub | Link custom GitHub repo: `/repo owner/name [token]` |
+| `/near` | Ⓝ NEAR Treasury | Inspect NEAR testnet sync & agent bounty status |
+| `/profile` | — | View active developer profile & wallet |
+
+### 2. Run Locally
+
 ```bash
-git clone https://github.com/Rampop01/Mend.git
-cd Mend
+# Clone the repository
+git clone https://github.com/Rampop01/mend-protocol.git
+cd mend-protocol
 
-# Copy environment template
+# Configure environment
 cp .env.example .env
+# Fill in your TELEGRAM_BOT_TOKEN from @BotFather
 
-# Add your Telegram Bot Token to .env
-# (If omitted, Mend runs in local web console mode)
-echo "TELEGRAM_BOT_TOKEN=your_token_here" >> .env
-```
-
-### 3. Run Unit Tests
-```bash
+# Run unittests
 python3 -m unittest discover -s tests -v
-```
 
-### 4. Start the Mend Server
-```bash
+# Start Mend Protocol Server on port 8770
 python3 server.py
 ```
-Open **`http://127.0.0.1:8765`** in your browser and open **`@mend_switch_bot`** on Telegram!
 
 ---
 
-## How to Test the Demo Flow
+## 🧪 Real Unittests (Zero Mocks)
 
-1. Open **`http://127.0.0.1:8765`** in your browser and open **`@mend_switch_bot`** on Telegram.
-2. Tap **`🚨 Trigger Bug`** (or send `/trigger` in Telegram or click **`EXECUTE 100% PROMO VOUCHER`** on the web console):
-   - The checkout engine hits a real `ZeroDivisionError: division by zero`.
-   - Within 2 seconds, `@mend-recon` analyzes the stack frame and AST snippet.
-   - `@mend-forge` writes a surgical diff and validates it with passing unittests (`4/4 tests`).
-   - `@mend-guard` runs Switch Trust security policies (99.4% trust score) and presents an inline approval button on your phone.
-3. Tap **`[✅ Approve & Push Hotfix]`** (or reply `ship it` or tap `🚀 Ship Hotfix`):
-   - `services/checkout_engine.py` is hot-reloaded with zero downtime.
-   - A new Git branch `hotfix/INC-xxxxx` is created, committed, and pushed directly to GitHub.
-   - Clickable links appear on Telegram to view the branch and open a GitHub PR in one click.
-   - The failed voucher transaction is replayed automatically and settles to the SQLite ledger with `HTTP 200 OK`.
-4. Tap **`[🔄 Reset to Baseline]`** (or send `/reset`) anytime to reset the codebase and demo it again!
+Mend does not use simulated outputs. All tests execute the real Python `unittest` runner:
 
----
+```bash
+$ python3 -m unittest discover -s tests -v
+test_full_voucher_zero_net_settlement_regression (test_checkout_engine.TestCheckoutSettlementEngine) ... ok
+test_multi_currency_ngn_and_kes_exponent_regression (test_checkout_engine.TestCheckoutSettlementEngine) ... ok
+test_partial_discount_eur_settlement (test_checkout_engine.TestCheckoutSettlementEngine) ... ok
+test_standard_usd_settlement (test_checkout_engine.TestCheckoutSettlementEngine) ... ok
 
-## Built For
+----------------------------------------------------------------------
+Ran 4 tests in 0.005s
 
-- **Flip the Switch Hackathon** hosted by **WeMakeDevs** & **DevTools Academy**, powered by **Switch AI**.
-- **Tracks**: Best Business Workflow ($2,000) & Code with Wispr ($500).
+OK
+```
 
 ---
 
-## License
+## 👥 Built For
 
-Apache 2.0. Built with pride by Popoola Rahmat.
+**NEAR Protocol Hackathon: Build Beyond Boundaries**  
+- **Track 1:** AI Swarms & Multi-Agent Coordination  
+- **Track 2:** AI Security & Defense / Autonomous SRE  
+- **Track 3:** Autonomous Business & On-Chain Agent Economy  
+
+*Developed by Rampop (@Rampop01)*

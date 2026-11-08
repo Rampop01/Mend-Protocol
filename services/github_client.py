@@ -185,3 +185,4 @@ class GitHubClient:
                 "state": data.get("state"),
             }
         return {"ok": False, "error": data.get("message", f"HTTP {status}")}
+

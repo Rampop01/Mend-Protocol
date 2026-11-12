@@ -124,6 +124,9 @@ class TelegramBot:
             steps = "\n".join(f"• <b>{esc(t['agent'])}</b>: {esc(t['message'])}" for t in incident["timeline"][-6:])
             return f"🚨 <b>Production crash detected</b>\n\n{head}\n\n<i>The swarm is working…</i>\n{steps}", keyboard
 
+        if status == "STALE":
+            return f"ℹ️ <b>Crash in an older deployment</b>\n\n{head}\n\n{esc(incident['timeline'][-1]['message'])}", keyboard
+
         if status in ("FAILED", "NO_FIX"):
             reason = incident.get("error") or "No candidate patch passed the guard and the test suite."
             lines = [f"⚠️ <b>No automatic fix</b>\n\n{head}\n\n{esc(reason)}"]

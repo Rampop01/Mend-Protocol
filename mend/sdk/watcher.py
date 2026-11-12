@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import functools
 import json
+import linecache
 import logging
 import os
 import sys
@@ -52,6 +53,7 @@ def extract_incident_context(exc: BaseException, repo: Optional[str] = None) -> 
             "file": os.path.abspath(code.co_filename),
             "line": tb.tb_lineno,
             "function": code.co_name,
+            "code": linecache.getline(code.co_filename, tb.tb_lineno).strip()[:300],
             "_locals": tb.tb_frame.f_locals,
         })
         tb = tb.tb_next

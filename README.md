@@ -55,7 +55,7 @@ pip install -r requirements.txt
 python -m unittest discover -s tests -t .
 ```
 
-Expect `Ran 52 tests` and `OK`. These run the whole pipeline against a temporary project, including a hostile LLM patch that must be blocked before it executes.
+Expect `Ran 58 tests` and `OK`. These run the whole pipeline against a temporary project, including a hostile LLM patch that must be blocked before it executes.
 
 ### 2. Create your own testnet deployment
 
@@ -105,23 +105,26 @@ Copy `.env.example` to `.env` and set any of these. The server logs which are ac
 | --- | --- |
 | `NEAR_AI_API_KEY` | Enables the `forge-llm` agent through NEAR AI Cloud. Without it that agent records "No LLM API key configured" and only `forge-rules` competes. |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | Sends each incident to Telegram as one message that updates in place, with Approve and Reject buttons. Send `/start` to the bot to get the ids. `TELEGRAM_APPROVER_IDS` restricts who may approve. |
-| `GITHUB_TOKEN` | Opens a pull request for each approved fix, only if the file on the base branch matches the file the patch was verified against. |
+| `GITHUB_TOKEN` | Opens a pull request for each approved fix, only if the file on the base branch matches the file the patch was verified against. If unset, Mend uses your `gh auth login` session. |
 | `MEND_INGEST_TOKEN` | Bearer token for the API. Required to listen on anything other than loopback. |
 
-### Watch your own code
+### Connect your own GitHub repository
 
-List the project in `mend.projects.json` on the server (its root directory and its test command), then:
-
-```python
-from mend.sdk import MendWatch
-
-watch = MendWatch(repo="your-org/your-repo")
-
-@watch
-def handle_order(order): ...
+```bash
+gh auth login                      # or set GITHUB_TOKEN in .env
+python -m mend connect your-org/your-repo
 ```
 
-The test command is read from the server's configuration, never from an incident report.
+Expect it to clone the repository into `.mend/workspaces/`, detect the test command (pytest or unittest), print how many tests pass, and open a 2 NEAR treasury for the repository on the escrow contract. Then add the SDK to the application and restart `mend serve`:
+
+```python
+from mend.sdk import init_mend
+init_mend(repo="your-org/your-repo")   # or MendWatch(...) around request handlers
+```
+
+For a connected repository Mend analyses the latest commit on GitHub, and an approved fix arrives as a **pull request**. The pull request is opened before any bounty is paid, and the settlement transaction is added to it as a comment. If the crashing line differs from the code on GitHub (an older deployment, or already fixed upstream), Mend closes the incident as `STALE` without paying.
+
+[Rampop01/mend-demo-shop](https://github.com/Rampop01/mend-demo-shop) is a small checkout API set up this way. Its coupon parser crashes on codes like `SAVEBIG`; the rule-based agent has no rule for `ValueError`, so the LLM agent's fix wins.
 
 ## How the guard scores a patch
 
@@ -159,9 +162,10 @@ mend/swarm/                recon, forge and guard agents, and the orchestrator
 mend/integrations/         NEAR transaction signing, escrow client, GitHub, LLM
 mend/bot/                  Telegram control plane
 mend/server.py             HTTP API and dashboard
-mend/cli.py                setup, serve, status, approve, reject
+mend/cli.py                setup, connect, serve, status, approve, reject
+mend/connect.py            GitHub repository workspaces
 examples/payment_service/  example service with a real bug and a test suite
-tests/                     52 Python tests
+tests/                     58 Python tests
 ```
 
 Rebuild the contract with `contracts/build.sh` (needs `rustup`; uses `wasm-opt` if installed) and test it with `cargo test` in `contracts/bounty_escrow`.

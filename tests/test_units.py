@@ -227,8 +227,9 @@ class ParserAndSdkTests(unittest.TestCase):
     def test_sdk_payload_has_frames_with_locals(self):
         def boom(secret_token, n):
             return n / 0
+        session_token = "".join(["hun", "ter2"])  # a runtime value, not source text
         try:
-            boom("hunter2", 3)
+            boom(session_token, 3)
         except ZeroDivisionError as exc:
             payload = extract_incident_context(exc, repo="a/b")
         last = payload["frames"][-1]

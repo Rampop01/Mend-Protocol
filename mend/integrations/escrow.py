@@ -287,29 +287,46 @@ def setup_testnet(
         _save(keys_file, state)
 
     # 4. Register each repository treasury and its agent allowlist.
-    accounts = {role: entry["account_id"] for role, entry in state["accounts"].items()}
     for repo in repos:
-        if rpc.view(contract_id, "get_repo", {"repo_id": repo}) is None:
-            log(f"Registering treasury for {repo} with {TREASURY_DEPOSIT} NEAR")
-            result = owner.call(
-                contract_id, "register_repo",
-                {"repo_id": repo, "operator": accounts["operator"], "max_bounty": str(near_to_yocto(MAX_BOUNTY))},
-                deposit=near_to_yocto(TREASURY_DEPOSIT), wait_until="FINAL",
-            )
-            state["setup_txs"][f"register:{repo}"] = result.explorer_url
-        registered = rpc.view(contract_id, "get_repo", {"repo_id": repo}) or {}
-        if not registered.get("guard_agent"):
-            log(f"Setting the agent allowlist for {repo}")
-            result = owner.call(
-                contract_id, "set_agents",
-                {"repo_id": repo, "recon_agent": accounts["recon"], "guard_agent": accounts["guard"],
-                 "forge_agents": [accounts["forge-rules"], accounts["forge-llm"]]},
-                wait_until="FINAL",
-            )
-            state["setup_txs"][f"agents:{repo}"] = result.explorer_url
-        if repo not in state["repos"]:
-            state["repos"].append(repo)
-        _save(keys_file, state)
+        register_repo_treasury(keys_file, repo, log=log)
+    state = json.loads(keys_file.read_text(encoding="utf-8"))
 
     log(f"Setup complete. Contract: {rpc.account_url(contract_id)}")
     return state
+
+
+def register_repo_treasury(keys_file: Path, repo: str, log: Callable[[str], None] = print) -> Dict[str, Any]:
+    """
+    Opens a treasury for `repo` on the deployed contract, funded by the owner,
+    and allowlists this deployment's agents for it. Safe to call again.
+    """
+    state: Dict[str, Any] = json.loads(keys_file.read_text(encoding="utf-8"))
+    rpc = NearRpc(state["network"])
+    contract_id = state["contract_id"]
+    owner_entry = state["accounts"]["owner"]
+    owner = NearAccount(owner_entry["account_id"], KeyPair.from_string(owner_entry["secret_key"]), rpc)
+    accounts = {role: entry["account_id"] for role, entry in state["accounts"].items()}
+    txs = state.setdefault("setup_txs", {})
+
+    if rpc.view(contract_id, "get_repo", {"repo_id": repo}) is None:
+        log(f"Registering treasury for {repo} with {TREASURY_DEPOSIT} NEAR")
+        result = owner.call(
+            contract_id, "register_repo",
+            {"repo_id": repo, "operator": accounts["operator"], "max_bounty": str(near_to_yocto(MAX_BOUNTY))},
+            deposit=near_to_yocto(TREASURY_DEPOSIT), wait_until="FINAL",
+        )
+        txs[f"register:{repo}"] = result.explorer_url
+    registered = rpc.view(contract_id, "get_repo", {"repo_id": repo}) or {}
+    if not registered.get("guard_agent"):
+        log(f"Setting the agent allowlist for {repo}")
+        result = owner.call(
+            contract_id, "set_agents",
+            {"repo_id": repo, "recon_agent": accounts["recon"], "guard_agent": accounts["guard"],
+             "forge_agents": [accounts["forge-rules"], accounts["forge-llm"]]},
+            wait_until="FINAL",
+        )
+        txs[f"agents:{repo}"] = result.explorer_url
+    if repo not in state["repos"]:
+        state["repos"].append(repo)
+    _save(keys_file, state)
+    return rpc.view(contract_id, "get_repo", {"repo_id": repo}) or {}

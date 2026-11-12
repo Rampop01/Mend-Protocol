@@ -117,3 +117,22 @@ class GitHubClient:
         if status not in (200, 201):
             return {"ok": False, "error": self._error(status, pr)}
         return {"ok": True, "pr_url": pr.get("html_url"), "pr_number": pr.get("number"), "branch": branch}
+
+    def get_repo(self, repo: str) -> Dict[str, Any]:
+        status, info = self._request("GET", f"repos/{repo}")
+        if status != 200:
+            return {"ok": False, "error": self._error(status, info)}
+        return {
+            "ok": True,
+            "full_name": info.get("full_name", repo),
+            "default_branch": info.get("default_branch", "main"),
+            "private": bool(info.get("private")),
+            "clone_url": info.get("clone_url") or f"https://github.com/{repo}.git",
+            "can_push": bool((info.get("permissions") or {}).get("push")),
+        }
+
+    def comment(self, repo: str, number: int, body: str) -> Dict[str, Any]:
+        status, data = self._request("POST", f"repos/{repo}/issues/{number}/comments", {"body": body})
+        if status not in (200, 201):
+            return {"ok": False, "error": self._error(status, data)}
+        return {"ok": True, "url": data.get("html_url")}

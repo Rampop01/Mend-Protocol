@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from mend.config import Project, Settings
+from mend.connect import ConnectError, sync_workspace
 from mend.integrations.escrow import EscrowClient
 from mend.integrations.github import GitHubClient
 from mend.integrations.llm import LLMClient
@@ -162,6 +163,7 @@ class SwarmOrchestrator:
             "error_type": error_type,
             "error_message": error_message,
             "traceback": str(payload.get("traceback") or "")[-6000:],
+            "reported_line": str(frame.get("code") or "")[:300],
             "recon": None,
             "candidates": [],
             "winner": None,
@@ -171,6 +173,7 @@ class SwarmOrchestrator:
             "resolution": None,
             "error": None,
             "telegram": None,
+            "pull_request": None,
         }
         self._note(incident, "sdk", f"Crash received: {error_type} at {rel_path}:{line_number}")
         self.store.save(incident)
@@ -193,6 +196,29 @@ class SwarmOrchestrator:
         file_path = project.root / incident["rel_path"]
         incident["status"] = "ANALYZING"
         self.store.save(incident)
+
+        if project.managed:
+            # Analyse exactly what is on GitHub, so the fix applies cleanly as a pull request.
+            try:
+                commit = sync_workspace(project, token=self.github.token)
+            except ConnectError as exc:
+                self._fail(incident, f"Could not sync {project.repo} from GitHub: {exc}")
+                return
+            incident["commit"] = commit
+            self._note(incident, "operator", f"Synced {project.repo}@{project.base_branch} ({commit[:7]}) from GitHub")
+            if not file_path.is_file():
+                self._fail(incident, f"{incident['rel_path']} does not exist on {project.base_branch}")
+                return
+            lines = file_path.read_text(encoding="utf-8").splitlines()
+            current = lines[incident["line_number"] - 1].strip() if incident["line_number"] <= len(lines) else ""
+            if incident.get("reported_line") and current != incident["reported_line"]:
+                self._close_unpaid(
+                    incident, "STALE",
+                    f"Line {incident['line_number']} on {project.base_branch} is no longer the line that crashed, "
+                    "so the running deployment is older than GitHub (it may already be fixed). Redeploy and "
+                    "Mend will analyse any crash that remains.",
+                )
+                return
 
         # Reserve the bounty before any work is done, so agents work against funded escrow.
         if self.escrow is None:
@@ -366,20 +392,44 @@ class SwarmOrchestrator:
             }
             incident["resolution"] = resolution
 
+            # Connected repositories receive the fix as a pull request, opened before any money moves.
+            # If the payout then fails, the PR is kept and a retry reuses it.
+            if project.managed:
+                if not incident.get("pull_request"):
+                    if not self.github.token:
+                        self._abort_approval(incident)
+                        raise IncidentError("Cannot open a pull request: no GitHub token on the Mend server")
+                    result = self.github.open_fix_pull_request(
+                        repo=project.repo, base_branch=project.base_branch,
+                        branch=f"mend/{incident_id.lower()}", rel_path=incident["rel_path"],
+                        original_sha256=incident["recon"]["source_sha256"],
+                        patched_source=winner["patched_source"],
+                        title=f"fix: {incident['error_type']} in {incident['rel_path']} ({incident_id})",
+                        body=self._pr_body(incident, winner, resolution),
+                    )
+                    if not result.get("ok"):
+                        self._note(incident, "operator", f"Pull request not opened: {result.get('error')}")
+                        self._abort_approval(incident)
+                        raise IncidentError(f"Pull request could not be opened, nothing was paid: {result.get('error')}")
+                    incident["pull_request"] = {"url": result["pr_url"], "number": result["pr_number"],
+                                                "branch": result["branch"]}
+                    self._note(incident, "operator", f"Opened pull request #{result['pr_number']}",
+                               tx_url=None)
+                    self.store.save(incident)
+                resolution["pr_url"] = incident["pull_request"]["url"]
+
             # 1. Settle on-chain first. If the contract refuses, nothing is changed locally.
             if incident["chain"]["enabled"]:
                 if not winner.get("attested_on_chain"):
-                    incident["status"] = "AWAITING_APPROVAL"
-                    self.store.save(incident)
+                    self._abort_approval(incident)
                     raise IncidentError("The winning patch has no on-chain guard attestation, so it cannot be paid")
                 try:
                     tx = self.escrow.approve(incident_id, winner["strategy"], winner["patch_hash"])
                 except NearError as exc:
-                    incident["status"] = "AWAITING_APPROVAL"
-                    incident["resolution"] = None
                     self._note(incident, "owner", f"On-chain approval failed: {exc}")
-                    self.store.save(incident)
-                    raise IncidentError(f"On-chain approval failed, nothing was changed: {exc}")
+                    self._abort_approval(incident)
+                    kept = " The pull request stays open; approve again to retry the payout." if incident.get("pull_request") else ""
+                    raise IncidentError(f"On-chain approval failed, nothing was paid: {exc}.{kept}")
                 self._record_tx(incident, "owner", "approve", tx,
                                 f"{approver} approved; {incident['bounty_near']} NEAR bounty released")
                 resolution["settlement"] = tx.to_dict()
@@ -390,13 +440,14 @@ class SwarmOrchestrator:
                 )
             self.store.save(incident)
 
-            # 2. Apply the verified patch to the working tree, atomically.
-            self._write_atomic(target, winner["patched_source"])
-            resolution["applied"] = True
-            self._note(incident, "operator", f"Applied the patch to {incident['rel_path']}")
-
-            # 3. Open a pull request so the fix reaches the repository.
-            self._open_pull_request(incident, project, winner, resolution)
+            if project.managed:
+                self._comment_settlement(incident, project, resolution)
+            else:
+                # A local project: apply the verified patch to the working tree, then offer a PR.
+                self._write_atomic(target, winner["patched_source"])
+                resolution["applied"] = True
+                self._note(incident, "operator", f"Applied the patch to {incident['rel_path']}")
+                self._open_pull_request(incident, project, winner, resolution)
 
             incident["status"] = "RESOLVED"
             self.store.save(incident)
@@ -416,6 +467,23 @@ class SwarmOrchestrator:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    def _abort_approval(self, incident: Dict[str, Any]) -> None:
+        incident["status"] = "AWAITING_APPROVAL"
+        incident["resolution"] = None
+        self.store.save(incident)
+
+    def _comment_settlement(self, incident: Dict[str, Any], project: Project, resolution: Dict[str, Any]) -> None:
+        """Adds the on-chain settlement to the pull request, so reviewers can audit the payout."""
+        pr = incident["pull_request"]
+        if resolution.get("settlement"):
+            lines = [f"Approved by {resolution['approver']}. Bounty settled on NEAR: {resolution['settlement']['explorer_url']}", ""]
+            lines += [f"- {p['role']}: {p['amount_near']} NEAR to `{p['account']}`" for p in resolution["payouts"]]
+        else:
+            lines = [f"Approved by {resolution['approver']}. " + " ".join(resolution["notes"])]
+        result = self.github.comment(project.repo, pr["number"], "\n".join(lines))
+        if not result.get("ok"):
+            resolution["notes"].append(f"Could not comment on the pull request: {result.get('error')}")
 
     def _open_pull_request(self, incident: Dict[str, Any], project: Project, winner: Dict[str, Any],
                            resolution: Dict[str, Any]) -> None:

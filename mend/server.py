@@ -164,7 +164,7 @@ class MendHandler(BaseHTTPRequestHandler):
         if path == "/api/v1/status":
             settings = self.server.settings
             self._json(200, {
-                "projects": [{"repo": p.repo, "test_command": p.test_command} for p in settings.projects],
+                "projects": [{"repo": p.repo, "managed": p.managed, "base_branch": p.base_branch} for p in settings.projects],
                 "incidents": orchestrator.store.count(),
                 "bounty_near": settings.bounty_near,
                 "agents": {
@@ -249,10 +249,11 @@ def serve(settings: Optional[Settings] = None) -> None:
     orchestrator.start()
 
     escrow = orchestrator.escrow
-    logger.info("Projects: %s", ", ".join(p.repo for p in settings.projects))
+    for project in settings.projects:
+        logger.info("Watching %s (%s)", project.repo, "GitHub, fixes as pull requests" if project.managed else "local checkout")
     logger.info("NEAR: %s", f"{escrow.network} contract {escrow.contract_id}" if escrow else "not configured (run `mend setup`)")
     logger.info("LLM forge agent: %s", f"enabled ({settings.llm_model})" if orchestrator.llm_forge.available else "disabled (set NEAR_AI_API_KEY)")
-    logger.info("GitHub pull requests: %s", "enabled" if settings.github_token else "disabled (set GITHUB_TOKEN)")
+    logger.info("GitHub pull requests: %s", f"enabled ({settings.github_token_source})" if settings.github_token else "disabled (run `gh auth login` or set GITHUB_TOKEN)")
     if bot is not None:
         try:
             bot.start()

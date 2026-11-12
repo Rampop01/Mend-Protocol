@@ -2,6 +2,8 @@
 Command line for Mend.
 
   mend setup            create testnet accounts, deploy the escrow contract, fund the treasury
+  mend connect <repo>   clone a GitHub repo, check its tests, open its treasury on NEAR
+  mend projects         list the codebases Mend watches
   mend serve            run the server
   mend status           show treasury, agent earnings and incidents
   mend incidents        list recent incidents
@@ -79,7 +81,11 @@ def cmd_setup(args: argparse.Namespace, settings: Settings) -> None:
 
     if settings.near_network != "testnet":
         raise SystemExit("`mend setup` only provisions testnet accounts.")
-    repos = [p.repo for p in settings.projects]
+    from mend.config import load_projects
+    try:
+        repos = [p.repo for p in load_projects(settings, settings.base_dir / "mend.projects.json")]
+    except SystemExit:
+        repos = []
     try:
         setup_testnet(settings.near_keys_file, repos, owner_name=args.owner_name)
     except NearError as exc:
@@ -92,6 +98,32 @@ def cmd_setup(args: argparse.Namespace, settings: Settings) -> None:
     public.write_text(json.dumps({**client.deployment().public_dict(), "setup_txs": state.get("setup_txs", {})}, indent=2) + "\n")
     print(f"Keys saved to {settings.near_keys_file} (keep this file private).")
     print(f"Public deployment record written to {public}.")
+
+
+def cmd_connect(args: argparse.Namespace, settings: Settings) -> None:
+    import shlex
+    from mend.connect import ConnectError, connect_repo
+    from mend.integrations.near import NearError
+
+    command = shlex.split(args.test_command) if args.test_command else None
+    try:
+        result = connect_repo(settings, args.repo, test_command=command, base_branch=args.base_branch,
+                              register_on_chain=not args.no_chain)
+    except (ConnectError, NearError) as exc:
+        raise SystemExit(f"Could not connect: {exc}")
+    print(f"\nConnected {result['repo']} ({result['base_branch']} @ {result['commit'][:7]}).")
+    if result["treasury"]:
+        print(f"Treasury: {yocto_to_near(result['treasury']['balance'])} NEAR, "
+              f"max bounty {yocto_to_near(result['treasury']['max_bounty'])} NEAR per incident.")
+    print("Restart `mend serve` if it is running. In your app:\n")
+    print("    from mend.sdk import init_mend")
+    print(f'    init_mend(repo="{result["repo"]}")')
+
+
+def cmd_projects(args: argparse.Namespace, settings: Settings) -> None:
+    for project in settings.projects:
+        kind = f"GitHub, fixes as pull requests to {project.base_branch}" if project.managed else "local checkout"
+        print(f"{project.repo}  ({kind})\n    {project.root}\n    tests: {' '.join(project.test_command)}")
 
 
 def cmd_status(args: argparse.Namespace, settings: Settings) -> None:
@@ -137,6 +169,12 @@ def main(argv: Optional[list] = None) -> None:
     sub = parser.add_subparsers(dest="command", required=True)
     setup = sub.add_parser("setup", help="create testnet accounts and deploy the escrow contract")
     setup.add_argument("--owner-name", help="name for the owner account, without .testnet (default: random)")
+    connect = sub.add_parser("connect", help="watch a GitHub repository")
+    connect.add_argument("repo", help="owner/repo or a GitHub URL")
+    connect.add_argument("--test-command", help='how to run the tests, e.g. "python -m pytest -q"')
+    connect.add_argument("--base-branch", help="branch to fix (default: the repository's default branch)")
+    connect.add_argument("--no-chain", action="store_true", help="do not open a treasury on NEAR")
+    sub.add_parser("projects", help="list watched codebases")
     sub.add_parser("serve", help="run the server")
     sub.add_parser("status", help="show treasury, agents and incident counts")
     sub.add_parser("incidents", help="list recent incidents")
@@ -148,7 +186,13 @@ def main(argv: Optional[list] = None) -> None:
         decide.add_argument("incident_id")
     args = parser.parse_args(argv)
 
-    settings = load_settings()
+    settings = load_settings(require_projects=args.command not in ("connect", "setup"))
+    if args.command == "connect":
+        cmd_connect(args, settings)
+        return
+    if args.command == "projects":
+        cmd_projects(args, settings)
+        return
     if args.command == "serve":
         from mend.server import serve
         serve(settings)

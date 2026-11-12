@@ -54,11 +54,12 @@ def crash_fingerprint(repo: str, rel_path: str, line_number: int, error_type: st
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
-def _match_in_project(project: Project, reported: str) -> Optional[Path]:
+def _match_in_project(project: Project, reported: str, allow_basename: bool = False) -> Optional[Path]:
     """
     Maps a path reported by the watched process to a file in the project.
     Accepts an absolute path inside the root, or a path from another checkout
     whose trailing components identify exactly one file under the root.
+    A bare filename is accepted only when the report names this project's repo.
     """
     path = Path(reported)
     if path.is_absolute():
@@ -67,7 +68,7 @@ def _match_in_project(project: Project, reported: str) -> Optional[Path]:
             return resolved
     parts = [p for p in path.parts if p not in ("/", "\\")]
     for start in range(len(parts)):
-        if len(parts) - start < 2 and len(parts) > 1:
+        if len(parts) - start < 2 and len(parts) > 1 and not allow_basename:
             break  # a bare filename is too ambiguous to trust
         candidate = (project.root.joinpath(*parts[start:])).resolve()
         if project.contains(candidate) and candidate.is_file():
@@ -91,7 +92,8 @@ def locate_frame(
         if not reported or line <= 0:
             continue
         for project in projects:
-            match = _match_in_project(project, reported)
+            named = bool(repo_hint) and project.repo.lower() == str(repo_hint).lower()
+            match = _match_in_project(project, reported, allow_basename=named)
             if match is not None and match.suffix == ".py":
                 return project, match, line, frame
     return None

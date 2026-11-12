@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -39,6 +41,9 @@ class Project:
     test_timeout: int = 120
     base_branch: Optional[str] = None
     sandbox_ignore: List[str] = field(default_factory=list)
+    # Managed projects are clones Mend owns (created by `mend connect`). Mend keeps them
+    # in sync with GitHub and delivers fixes only as pull requests.
+    managed: bool = False
 
     def contains(self, path: Path) -> bool:
         try:
@@ -65,6 +70,7 @@ class Settings:
     telegram_approver_ids: List[str] = field(default_factory=list)
 
     github_token: str = ""
+    github_token_source: str = ""
 
     llm_api_key: str = ""
     llm_base_url: str = "https://cloud-api.near.ai/v1"
@@ -73,6 +79,8 @@ class Settings:
     near_network: str = "testnet"
     near_keys_file: Path = Path(".mend/testnet.json")
     bounty_near: str = "0.25"
+    connected_projects_file: Path = Path(".mend/projects.json")
+    workspaces_dir: Path = Path(".mend/workspaces")
 
     def project_for(self, path: Path) -> Optional[Project]:
         for project in self.projects:
@@ -91,12 +99,7 @@ class Settings:
         return self.host in ("127.0.0.1", "localhost", "::1")
 
 
-def _load_projects(path: Path, base_dir: Path) -> List[Project]:
-    if not path.exists():
-        raise SystemExit(
-            f"Projects file not found: {path}\n"
-            "Create it to tell Mend which codebases it may repair. See mend.projects.json for the format."
-        )
+def _parse_projects(path: Path, managed: bool) -> List[Project]:
     data: Dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
     projects: List[Project] = []
     for entry in data.get("projects", []):
@@ -105,7 +108,7 @@ def _load_projects(path: Path, base_dir: Path) -> List[Project]:
             raise SystemExit(f"{path}: test_command for {entry.get('repo')} must be a non-empty list of strings")
         root = Path(entry["root"])
         if not root.is_absolute():
-            root = (path.parent / root)
+            root = path.parent / root
         root = root.resolve()
         if not root.is_dir():
             raise SystemExit(f"{path}: project root does not exist: {root}")
@@ -117,14 +120,40 @@ def _load_projects(path: Path, base_dir: Path) -> List[Project]:
                 test_timeout=int(entry.get("test_timeout", 120)),
                 base_branch=entry.get("base_branch"),
                 sandbox_ignore=[str(x) for x in entry.get("sandbox_ignore", [])],
+                managed=managed,
             )
         )
-    if not projects:
-        raise SystemExit(f"{path}: no projects configured")
     return projects
 
 
-def load_settings(base_dir: Optional[Path] = None) -> Settings:
+def load_projects(settings: "Settings", projects_file: Path) -> List[Project]:
+    """Projects listed by hand in mend.projects.json plus those added with `mend connect`."""
+    projects: List[Project] = []
+    if projects_file.exists():
+        projects += _parse_projects(projects_file, managed=False)
+    if settings.connected_projects_file.exists():
+        known = {p.repo.lower() for p in projects}
+        projects += [p for p in _parse_projects(settings.connected_projects_file, managed=True)
+                     if p.repo.lower() not in known]
+    if not projects:
+        raise SystemExit(
+            "No projects configured. Run `mend connect owner/repo`, or list a local project in mend.projects.json."
+        )
+    return projects
+
+
+def _gh_cli_token() -> str:
+    """Reuses the GitHub CLI login if there is one, so `gh auth login` is enough."""
+    if not shutil.which("gh"):
+        return ""
+    try:
+        out = subprocess.run(["gh", "auth", "token"], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    return out.stdout.strip() if out.returncode == 0 else ""
+
+
+def load_settings(base_dir: Optional[Path] = None, require_projects: bool = True) -> Settings:
     base = (base_dir or Path.cwd()).resolve()
     load_dotenv(base / ".env")
     env = os.environ
@@ -150,5 +179,13 @@ def load_settings(base_dir: Optional[Path] = None) -> Settings:
         near_keys_file=rel(env.get("MEND_KEYS_FILE", ".mend/testnet.json")),
         bounty_near=env.get("MEND_BOUNTY_NEAR", "0.25"),
     )
-    settings.projects = _load_projects(rel(env.get("MEND_PROJECTS_FILE", "mend.projects.json")), base)
+    settings.connected_projects_file = base / ".mend" / "projects.json"
+    settings.workspaces_dir = base / ".mend" / "workspaces"
+    if settings.github_token:
+        settings.github_token_source = "GITHUB_TOKEN"
+    elif env.get("MEND_USE_GH_CLI", "1") != "0":
+        settings.github_token = _gh_cli_token()
+        settings.github_token_source = "gh CLI login" if settings.github_token else ""
+    if require_projects:
+        settings.projects = load_projects(settings, rel(env.get("MEND_PROJECTS_FILE", "mend.projects.json")))
     return settings

@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mend Protocol</title>
+<style>
+  :root {
+    --bg: #0c0e11; --panel: #14171c; --line: #262b33; --text: #e7eaee; --muted: #8b94a1;
+    --accent: #00ec97; --warn: #f5b84b; --bad: #ff6b6b; --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 -apple-system, "Segoe UI", Inter, sans-serif; }
+  a { color: var(--accent); text-decoration: none; } a:hover { text-decoration: underline; }
+  header { display: flex; align-items: baseline; gap: 16px; padding: 18px 24px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  header h1 { margin: 0; font-size: 18px; letter-spacing: .2px; }
+  header .sub { color: var(--muted); }
+  main { display: grid; grid-template-columns: 360px 1fr; gap: 16px; padding: 16px 24px; align-items: start; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin-bottom: 16px; }
+  .panel h2 { margin: 0 0 10px; font-size: 12px; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); font-weight: 600; }
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .stat b { display: block; font-size: 18px; font-variant-numeric: tabular-nums; } .stat span { color: var(--muted); font-size: 12px; }
+  table { width: 100%; border-collapse: collapse; } td, th { text-align: left; padding: 5px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+  th { color: var(--muted); font-weight: 500; } tr:last-child td { border-bottom: 0; } td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .mono { font-family: var(--mono); font-size: 12px; word-break: break-all; }
+  .item { padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; margin-bottom: 8px; cursor: pointer; }
+  .item:hover, .item.sel { border-color: var(--accent); }
+  .item .t { font-weight: 600; } .item .m { color: var(--muted); font-size: 12px; }
+  .badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; border: 1px solid var(--line); color: var(--muted); }
+  .badge.RESOLVED { color: var(--accent); border-color: var(--accent); }
+  .badge.AWAITING_APPROVAL { color: var(--warn); border-color: var(--warn); }
+  .badge.FAILED, .badge.NO_FIX, .badge.REJECTED { color: var(--bad); border-color: var(--bad); }
+  pre { background: #0a0c0f; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; overflow: auto; font: 12px/1.5 var(--mono); margin: 8px 0; max-height: 380px; }
+  .add { color: var(--accent); } .del { color: var(--bad); } .hunk { color: var(--muted); }
+  .tl { list-style: none; margin: 0; padding: 0; } .tl li { padding: 5px 0; border-bottom: 1px solid var(--line); display: grid; grid-template-columns: 62px 96px 1fr; gap: 8px; font-size: 13px; }
+  .tl li:last-child { border-bottom: 0; } .tl .when { color: var(--muted); font-variant-numeric: tabular-nums; } .tl .who { font-family: var(--mono); font-size: 12px; color: var(--accent); }
+  .check { display: grid; grid-template-columns: 52px 1fr 60px; gap: 8px; padding: 4px 0; font-size: 13px; }
+  .PASS { color: var(--accent); } .FAIL { color: var(--bad); } .WARN { color: var(--warn); }
+  button { font: inherit; border-radius: 8px; padding: 8px 14px; border: 1px solid var(--line); background: transparent; color: var(--text); cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #04130c; font-weight: 600; }
+  button:disabled { opacity: .5; cursor: default; }
+  .actions { display: flex; gap: 8px; margin-top: 12px; align-items: center; flex-wrap: wrap; }
+  .muted { color: var(--muted); } .err { color: var(--bad); } .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .cand { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-top: 10px; } .cand.win { border-color: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Mend Protocol</h1>
+  <span class="sub" id="sub">Connecting…</span>
+</header>
+<main>
+  <div>
+    <div class="panel"><h2>Treasury on NEAR</h2><div id="treasury" class="muted">Loading…</div></div>
+    <div class="panel"><h2>Agents</h2><div id="agents" class="muted">Loading…</div></div>
+    <div class="panel"><h2>Incidents</h2><div id="list" class="muted">Loading…</div></div>
+  </div>
+  <div id="detail"><div class="panel muted">Select an incident. To create one, run <span class="mono">python examples/payment_service/app.py</span>.</div></div>
+</main>
+<script>
+"use strict";
+let token = sessionStorage.getItem("mend_token") || "";
+let selected = null, busy = false;
+
+function h(tag, attrs, ...kids) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (k === "class") el.className = v; else if (k === "onclick") el.onclick = v; else el.setAttribute(k, v);
+  }
+  for (const kid of kids.flat()) if (kid != null) el.append(kid.nodeType ? kid : document.createTextNode(String(kid)));
+  return el;
+}
+function link(url, text) {
+  // Only http(s) links are rendered as links.
+  return /^https:\/\//.test(url || "") ? h("a", {href: url, target: "_blank", rel: "noopener"}, text) : h("span", {}, text);
+}
+function near(yocto) {
+  const s = String(yocto || "0").padStart(25, "0");
+  const frac = s.slice(-24).slice(0, 4).replace(/0+$/, "");
+  return BigInt(s.slice(0, -24)).toString() + (frac ? "." + frac : "");
+}
+function clock(ts) { return new Date(ts * 1000).toLocaleTimeString([], {hour12: false}); }
+function set(id, ...kids) { const el = document.getElementById(id); el.className = ""; el.replaceChildren(...kids.flat()); }
+
+async function api(path, body) {
+  const headers = {};
+  if (token) headers["Authorization"] = "Bearer " + token;
+  if (body) headers["Content-Type"] = "application/json";
+  const res = await fetch(path, {method: body ? "POST" : "GET", headers, body: body ? JSON.stringify(body) : undefined});
+  if (res.status === 401) {
+    token = prompt("This Mend server requires its ingest token:") || "";
+    sessionStorage.setItem("mend_token", token);
+    throw new Error("Unauthorized");
+  }
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
+  return data;
+}
+
+function renderStatus(s) {
+  const n = s.near || {};
+  const llm = s.agents.forge_llm;
+  document.getElementById("sub").textContent =
+    (n.configured && !n.error ? "NEAR " + n.network : "NEAR not connected") + " · LLM forge " +
+    (llm.enabled ? "on (" + llm.model + ")" : "off") + " · " + s.projects.map(p => p.repo).join(", ");
+  if (!n.configured || n.error) {
+    set("treasury", h("div", {class: "err"}, n.error || "Not configured"));
+    set("agents", h("div", {class: "muted"}, "Agent accounts appear once NEAR is configured."));
+    return;
+  }
+  const blocks = [h("div", {class: "mono"}, link(n.contract_url, n.contract_id))];
+  for (const [repo, r] of Object.entries(n.repos || {})) {
+    if (!r) continue;
+    blocks.push(h("div", {class: "muted", style: "margin-top:8px"}, repo), h("div", {class: "stats"},
+      h("div", {class: "stat"}, h("b", {}, near(r.balance)), h("span", {}, "NEAR free")),
+      h("div", {class: "stat"}, h("b", {}, near(r.reserved)), h("span", {}, "NEAR reserved")),
+      h("div", {class: "stat"}, h("b", {}, near(r.total_paid)), h("span", {}, "NEAR paid"))));
+  }
+  set("treasury", blocks);
+  set("agents", h("table", {},
+    h("tr", {}, h("th", {}, "Agent"), h("th", {}, "Work"), h("th", {style: "text-align:right"}, "Earned")),
+    (n.agents || []).map(a => h("tr", {},
+      h("td", {class: "mono"}, link(a.explorer_url, a.role)),
+      h("td", {}, a.role === "recon" ? "reports: " + a.recon_reports : a.role === "guard" ? "attestations: " + a.attestations
+        : a.patches_accepted + " of " + a.patches_submitted + " accepted"),
+      h("td", {class: "num"}, near(a.earned) + " NEAR")))));
+}
+
+function renderList(items) {
+  if (!items.length) { set("list", h("div", {class: "muted"}, "No incidents yet.")); return; }
+  set("list", items.map(i => h("div", {class: "item" + (i.incident_id === selected ? " sel" : ""), onclick: () => { selected = i.incident_id; refresh(); }},
+    h("div", {class: "row"}, h("span", {class: "t"}, i.error_type), h("span", {class: "badge " + i.status}, i.status.replace("_", " "))),
+    h("div", {class: "m mono"}, i.rel_path + ":" + i.line_number),
+    h("div", {class: "m"}, i.incident_id + " · " + new Date(i.created_at * 1000).toLocaleString()))));
+}
+
+function diffBlock(diff) {
+  return h("pre", {}, (diff || "").split("\n").map(line => {
+    const cls = /^(\+\+\+|---)/.test(line) ? "hunk" : line[0] === "+" ? "add" : line[0] === "-" ? "del" : line.startsWith("@@") ? "hunk" : "";
+    return h("div", cls ? {class: cls} : {}, line || " ");
+  }));
+}
+
+function renderCandidate(c, winner) {
+  const box = h("div", {class: "cand" + (c.strategy === winner ? " win" : "")});
+  box.append(h("div", {class: "row"}, h("b", {}, "forge-" + c.strategy),
+    c.strategy === winner ? h("span", {class: "badge RESOLVED"}, "selected") : null,
+    c.agent_account ? h("span", {class: "mono muted"}, c.agent_account) : null));
+  if (c.declined) { box.append(h("div", {class: "muted"}, "No proposal: " + c.declined)); return box; }
+  box.append(h("div", {}, c.rationale));
+  if (c.forge_run) box.append(h("div", {class: "muted"},
+    c.forge_run.error || ((c.forge_run.tests_run - c.forge_run.tests_failed) + "/" + c.forge_run.tests_run + " tests passed in " + c.forge_run.duration_ms + " ms")));
+  if (c.guard) {
+    box.append(h("div", {style: "margin-top:8px"}, h("b", {}, "Guard: " + (c.guard.executed ? c.guard.score + "/100" : "blocked before execution"))));
+    for (const k of c.guard.checks) box.append(h("div", {class: "check"},
+      h("span", {class: k.status}, k.status), h("span", {}, k.name, h("span", {class: "muted"}, " — " + k.detail)),
+      h("span", {class: "muted", style: "text-align:right"}, k.max_points ? k.points + "/" + k.max_points : "")));
+  }
+  if (c.diff) box.append(diffBlock(c.diff));
+  box.append(h("div", {class: "mono muted"}, "patch sha256 " + c.patch_hash));
+  return box;
+}
+
+async function act(action) {
+  if (busy) return;
+  busy = true; refreshDetail();
+  try { await api("/api/v1/incidents/" + selected + "/" + action, {approver: "dashboard"}); }
+  catch (e) { alert(e.message); }
+  busy = false; refresh();
+}
+
+function renderDetail(i) {
+  const out = [];
+  const head = h("div", {class: "panel"},
+    h("div", {class: "row"}, h("b", {style: "font-size:16px"}, i.error_type + ": " + i.error_message), h("span", {class: "badge " + i.status}, i.status.replace("_", " "))),
+    h("div", {class: "mono muted"}, i.repo + " · " + i.rel_path + ":" + i.line_number + " · " + i.incident_id + (i.occurrences > 1 ? " · seen " + i.occurrences + " times" : "")));
+  if (i.recon && i.recon.summary) head.append(h("div", {style: "margin-top:8px"}, i.recon.summary));
+  if (i.error) head.append(h("div", {class: "err"}, i.error));
+  if (i.status === "AWAITING_APPROVAL") {
+    head.append(h("div", {class: "actions"},
+      h("button", Object.assign({class: "primary", onclick: () => act("approve")}, busy ? {disabled: ""} : {}),
+        busy ? "Settling on NEAR…" : i.chain.enabled ? "Approve and release " + i.bounty_near + " NEAR" : "Approve fix"),
+      h("button", Object.assign({onclick: () => act("reject")}, busy ? {disabled: ""} : {}), "Reject"),
+      h("span", {class: "muted"}, i.chain.enabled ? i.bounty_near + " NEAR reserved in escrow" : "No on-chain escrow: " + (i.chain.error || "not configured"))));
+  }
+  const r = i.resolution;
+  if (r) {
+    const box = h("div", {style: "margin-top:10px"}, h("div", {}, "Approved by " + r.approver));
+    if (r.settlement) box.append(h("div", {}, "Settlement: ", link(r.settlement.explorer_url, r.settlement.tx_hash)));
+    for (const p of r.payouts || []) box.append(h("div", {class: "mono"}, p.role + "  " + p.amount_near + " NEAR → " + p.account));
+    if (r.pr_url) box.append(h("div", {}, "Pull request: ", link(r.pr_url, r.pr_url)));
+    for (const n of r.notes || []) box.append(h("div", {class: "muted"}, n));
+    head.append(box);
+  }
+  out.push(head);
+  if (i.candidates.length) out.push(h("div", {class: "panel"}, h("h2", {}, "Candidate patches"), i.candidates.map(c => renderCandidate(c, i.winner))));
+  out.push(h("div", {class: "panel"}, h("h2", {}, "Timeline"), h("ul", {class: "tl"}, i.timeline.map(t => h("li", {},
+    h("span", {class: "when"}, clock(t.at)), h("span", {class: "who"}, t.agent),
+    h("span", {}, t.message, t.tx_url ? [" ", link(t.tx_url, "tx ↗")] : null))))));
+  if (i.recon && i.recon.code_context) out.push(h("div", {class: "panel"}, h("h2", {}, "Crash site"), h("pre", {}, i.recon.code_context)));
+  if (i.traceback) out.push(h("div", {class: "panel"}, h("h2", {}, "Traceback"), h("pre", {}, i.traceback)));
+  document.getElementById("detail").replaceChildren(...out);
+}
+
+async function refreshDetail() {
+  if (!selected) return;
+  try { renderDetail(await api("/api/v1/incidents/" + selected)); } catch (e) { /* shown on next poll */ }
+}
+async function refresh() {
+  try {
+    const [status, list] = await Promise.all([api("/api/v1/status"), api("/api/v1/incidents")]);
+    renderStatus(status);
+    if (!selected && list.incidents.length) selected = list.incidents[0].incident_id;
+    renderList(list.incidents);
+    await refreshDetail();
+  } catch (e) { document.getElementById("sub").textContent = "Cannot reach the Mend server: " + e.message; }
+}
+refresh();
+setInterval(() => { if (!busy) refresh(); }, 3000);
+</script>
+</body>
+</html>

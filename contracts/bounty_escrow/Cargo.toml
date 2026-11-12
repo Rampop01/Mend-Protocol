@@ -1,0 +1,23 @@
+[package]
+name = "mend-bounty-escrow"
+version = "0.2.0"
+edition = "2021"
+license = "MIT"
+description = "Mend Protocol: escrowed repair bounties paid to a swarm of repair agents on NEAR."
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+near-sdk = "5.30"
+
+[dev-dependencies]
+near-sdk = { version = "5.30", features = ["unit-testing"] }
+
+[profile.release]
+codegen-units = 1
+opt-level = "z"
+lto = true
+debug = false
+panic = "abort"
+overflow-checks = true

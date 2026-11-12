@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mend-protocol"
+version = "2.0.0"
+description = "A swarm of repair agents that fixes production crashes and is paid from an on-chain bounty escrow on NEAR."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+dependencies = ["PyNaCl>=1.5.0"]
+
+[project.urls]
+Homepage = "https://github.com/Rampop01/mend-protocol"
+
+[project.scripts]
+mend = "mend.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["mend*"]
+
+[tool.setuptools.package-data]
+mend = ["web/*.html", "contract/*.wasm"]

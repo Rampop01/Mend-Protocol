@@ -1,0 +1,26 @@
+{
+  "network": "testnet",
+  "contract_id": "escrow.mend-cb4c33d5.testnet",
+  "owner_id": "mend-cb4c33d5.testnet",
+  "accounts": {
+    "owner": "mend-cb4c33d5.testnet",
+    "operator": "operator.mend-cb4c33d5.testnet",
+    "recon": "recon.mend-cb4c33d5.testnet",
+    "forge-rules": "forge-rules.mend-cb4c33d5.testnet",
+    "forge-llm": "forge-llm.mend-cb4c33d5.testnet",
+    "guard": "guard.mend-cb4c33d5.testnet"
+  },
+  "repos": [
+    "Rampop01/mend-protocol"
+  ],
+  "setup_txs": {
+    "deploy": "https://testnet.nearblocks.io/txns/D1jeh4vZGVsyY2PdbzsKesSen3DvzyEwpiQ9AhhRaxJ3",
+    "create_operator": "https://testnet.nearblocks.io/txns/DFABT8RrVmxCaSPbdXKoqEU1YgEKCqsrY1kjF6EEHdUe",
+    "create_recon": "https://testnet.nearblocks.io/txns/8wMpgtc5cKmwnqCDT3KX8LQpnTkSbAeuLB4NwVTMdwgj",
+    "create_forge-rules": "https://testnet.nearblocks.io/txns/r5zTxnbpDJP2KBVk1NWHGxfhv7Em5oZ7nQDnwQ7A7Gd",
+    "create_forge-llm": "https://testnet.nearblocks.io/txns/8xyVtbz2pjYrXEMsNTNQgNA6aexAnFMBJifgVw4c9Pk3",
+    "create_guard": "https://testnet.nearblocks.io/txns/6YCwCHeJfTUDUA1AM33kkGTxjvpk4edYJkckXWapfrme",
+    "register:Rampop01/mend-protocol": "https://testnet.nearblocks.io/txns/Eph7TeoKkkJi6R9BxFUU76F9bfhq2gmaLmFVaabFznB7",
+    "agents:Rampop01/mend-protocol": "https://testnet.nearblocks.io/txns/J5Ux1hP4xe3vKtYZEZvBgngJeyuCh48E9hHP1otxd777"
+  }
+}

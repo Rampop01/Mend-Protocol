@@ -1,2 +1,0 @@
-"""Mend production services package."""
-

@@ -1,0 +1,11 @@
+{
+  "projects": [
+    {
+      "repo": "Rampop01/mend-protocol",
+      "root": ".",
+      "test_command": ["python3", "-m", "unittest", "discover", "-s", "examples/payment_service/tests"],
+      "test_timeout": 60,
+      "sandbox_ignore": ["data", "demo", "scripts", "contracts", "deployments"]
+    }
+  ]
+}

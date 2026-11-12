@@ -1,8 +1,32 @@
+# Secrets and local state
 .env
+.mend/
+data/
+
+# Python
+.venv/
 __pycache__/
-*.pyc
-data/*.db
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Rust
+contracts/bounty_escrow/target/
+
+# OS and tools
+.DS_Store
+.freebuff/
+
+# Demo recordings and local media
+demo/
+scripts/
 *.mp4
 *.wav
 *.aiff
+*.m4a
+*.png
+*.jpg
 
+# Screenshots referenced by the README are tracked
+!docs/*.png

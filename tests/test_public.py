@@ -335,3 +335,67 @@ class WatchConversation(PublicServiceTests):
         self.accounts.set_github("111", "alice", "alice:token")
         self.say(111, "please protect https://github.com/alice/mend-demo-shop")
         self.assertTrue(self.wait_for(lambda: any("is protected" in t for t in self.texts(111))), self.texts(111))
+
+
+class FaucetDrip(PublicServiceTests):
+    def setUp(self):
+        super().setUp()
+        sent = self.drips = []
+        balances = self.balances = {"alice.testnet": 0, "bob.testnet": 0, "rich.testnet": 5 * 10**24}
+
+        class Owner:
+            def balance(self_inner):
+                return self.owner_balance
+
+        class Rpc(RecordingEscrow._Rpc):
+            def view_account(self_inner, account_id):
+                return {"amount": str(balances.get(account_id, 0))} if account_id in balances else None
+
+        self.owner_balance = 4 * 10**24
+        self.escrow._accounts = {"owner": Owner()}
+        self.escrow.rpc = Rpc()
+
+        def send_near(account_id, amount_near):
+            from mend.integrations.near import near_to_yocto, TxResult
+            sent.append((account_id, amount_near))
+            balances[account_id] += near_to_yocto(amount_near)
+            return TxResult("tx", "owner.test", account_id, "b", "https://example.invalid/txns/tx")
+
+        self.escrow.send_near = send_near
+
+    def test_drip_once_per_person_and_per_wallet(self):
+        self.accounts.set_github("111", "alice", "alice:token")
+        self.accounts.set_near_account("111", "alice.testnet")
+        self.say(111, "/faucet")
+        self.assertTrue(self.wait_for(lambda: any("Sent." in t for t in self.texts(111))), self.texts(111))
+        self.assertEqual(self.drips, [("alice.testnet", "0.3")])
+
+        self.balances["alice.testnet"] = 0  # spent it; still only once
+        self.say(111, "/faucet")
+        self.assertIn("already received", self.texts(111)[-1])
+
+        # Another person pointing at the same wallet gets nothing either.
+        self.accounts.set_github("222", "bob", "bob:token")
+        self.accounts.upsert("222", "222", "bob")
+        self.accounts.set_near_account("222", "alice.testnet")
+        self.say(222, "/faucet")
+        self.assertIn("already received", self.texts(222)[-1])
+        self.assertEqual(len(self.drips), 1)
+
+    def test_no_drip_without_github_to_a_funded_wallet_or_below_the_reserve(self):
+        self.accounts.upsert("333", "333", "x")
+        self.accounts.set_near_account("333", "bob.testnet")
+        self.say(333, "/faucet")
+        self.assertIn("Connect GitHub first", self.texts(333)[-1])
+
+        self.accounts.set_github("444", "rich", "rich:token")
+        self.accounts.set_near_account("444", "rich.testnet")
+        self.say(444, "/faucet")
+        self.assertIn("already has", self.texts(444)[-1])
+
+        self.accounts.set_github("555", "bob", "bob:token")
+        self.accounts.set_near_account("555", "bob.testnet")
+        self.owner_balance = near_yocto = 17 * 10**23  # 1.7 NEAR: a drip would go below the 1.5 reserve
+        self.say(555, "/faucet")
+        self.assertIn("run out", self.texts(555)[-1])
+        self.assertEqual(self.drips, [])

@@ -45,6 +45,9 @@ except Exception as exc:
 Notify = Callable[[str], None]
 
 FAUCET_URL = "https://docs.near.org/getting-started/faucet"
+DRIP_NEAR = "0.3"              # sent once per person to a low testnet wallet
+DRIP_DAILY_LIMIT = 10          # drips per day across all users
+FUNDING_RESERVE_NEAR = "1.5"   # never drip below this; it pays for Mend-funded treasuries
 WALLET_DEPOSIT_NEAR = "0.2"
 
 
@@ -348,11 +351,48 @@ class HostedService:
         low = account is not None and int(account["amount"]) < near_to_yocto("0.3")
         self.send(user.chat_id if user else telegram_id, (
             f"✅ NEAR wallet linked: <code>{account_id}</code>\nBalance: <b>{balance} NEAR</b> ({escrow.network if escrow else 'testnet'})\n\n"
-            + (f"That's not enough to fund a treasury (0.2 NEAR + fees). Get free testnet NEAR: {FAUCET_URL}\n\n" if low else "")
+            + (f"That's not enough to fund a treasury (0.2 NEAR + fees). Send /faucet and Mend sends you {DRIP_NEAR} "
+               f"testnet NEAR, or use the NEAR faucet: {FAUCET_URL}\n\n" if low else "")
             + "When you fund a repository's treasury, this wallet signs it, and it signs each payout too. "
               "Next: /try"
         ))
         return {"account_id": account_id, "balance": account["amount"] if account else "0"}
+
+    def drip(self, telegram_id: str, notify: Notify) -> None:
+        """Sends a one-time 0.3 testnet NEAR to the user's linked wallet, so they can fund a treasury."""
+        escrow = self.orchestrator.escrow
+        if escrow is None or escrow.network != "testnet":
+            raise ServiceError("Mend can only send testnet NEAR.")
+        user = self.accounts.get(telegram_id)
+        if not user or not user.github_login:
+            raise ServiceError("Connect GitHub first (/connect). It helps keep the free NEAR for real people.")
+        wallet = self.accounts.near_account(telegram_id)
+        if not wallet:
+            raise ServiceError("Link your testnet wallet first: send /wallet.")
+        account = escrow.rpc.view_account(wallet)
+        if account is None:
+            raise ServiceError(f"{wallet} does not exist on NEAR testnet.")
+        if int(account["amount"]) >= near_to_yocto(DRIP_NEAR):
+            raise ServiceError(f"{wallet} already has {yocto_to_near(account['amount'])} NEAR, enough to fund a treasury.")
+        reserve = escrow._accounts["owner"].balance() - near_to_yocto(DRIP_NEAR)
+        if reserve < near_to_yocto(FUNDING_RESERVE_NEAR):
+            raise ServiceError(f"Mend's free testnet NEAR has run out for now. Use the NEAR faucet: {FAUCET_URL}")
+        # once per person, once per wallet, and a daily cap for everyone
+        if not self.accounts.take_quota(telegram_id, "drip-once", 1, day="ever"):
+            raise ServiceError(f"You've already received free testnet NEAR from Mend. For more, use the NEAR faucet: {FAUCET_URL}")
+        if not self.accounts.take_quota(f"wallet:{wallet}", "drip-once", 1, day="ever"):
+            raise ServiceError(f"{wallet} has already received free testnet NEAR from Mend. Faucet: {FAUCET_URL}")
+        if not self.accounts.take_quota("_all", "drip", DRIP_DAILY_LIMIT):
+            raise ServiceError(f"Today's free testnet NEAR is used up. Try tomorrow, or use the NEAR faucet: {FAUCET_URL}")
+
+        def work() -> None:
+            notify(f"💧 Sending {DRIP_NEAR} testnet NEAR to <code>{wallet}</code>…")
+            tx = escrow.send_near(wallet, DRIP_NEAR)
+            balance = yocto_to_near(escrow.rpc.view_account(wallet)["amount"])
+            notify(f"✅ Sent. <code>{wallet}</code> now has <b>{balance} NEAR</b>.\n{tx.explorer_url}\n\n"
+                   "That's enough to fund a bounty treasury from your wallet: send /try, or /watch owner/repo.")
+
+        self.run_async(telegram_id, "testnet NEAR", work, notify)
 
     def _continue(self, telegram_id: str, project: Project, then: str) -> None:
         user = self.accounts.get(telegram_id)

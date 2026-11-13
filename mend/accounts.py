@@ -150,9 +150,9 @@ class AccountStore:
             row = self._conn.execute("SELECT github_token FROM users WHERE telegram_id = ?", (telegram_id,)).fetchone()
         return self.vault.open(row[0]) if row and row[0] else ""
 
-    def take_quota(self, telegram_id: str, action: str, limit: int) -> bool:
-        """Counts one use of `action` today. Returns False once the daily limit is reached."""
-        day = time.strftime("%Y-%m-%d", time.gmtime())
+    def take_quota(self, telegram_id: str, action: str, limit: int, day: Optional[str] = None) -> bool:
+        """Counts one use of `action` today (or in the bucket `day`, e.g. "ever"). False once `limit` is reached."""
+        day = day or time.strftime("%Y-%m-%d", time.gmtime())
         with self._lock:
             row = self._conn.execute("SELECT count FROM usage WHERE telegram_id = ? AND action = ? AND day = ?",
                                      (telegram_id, action, day)).fetchone()

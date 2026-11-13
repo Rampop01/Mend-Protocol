@@ -142,6 +142,10 @@ class EscrowClient:
         return self._accounts["owner"].call(self.contract_id, "deposit", {"repo_id": repo_id},
                                             deposit=near_to_yocto(amount_near), wait_until="FINAL")
 
+    def send_near(self, account_id: str, amount_near: str) -> TxResult:
+        """Transfers testnet NEAR from Mend's funding account (used for the one-time wallet drip)."""
+        return self._accounts["owner"].send(account_id, [near.transfer(near_to_yocto(amount_near))], wait_until="FINAL")
+
     def has_funds_for(self, repo_id: str, bounty_near: str) -> bool:
         repo = self.get_repo(repo_id) or {}
         return int(repo.get("balance", 0)) >= near_to_yocto(bounty_near)

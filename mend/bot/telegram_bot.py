@@ -436,8 +436,13 @@ class TelegramBot:
                     except Exception:
                         balance = "unavailable right now"
                     text = f"Linked wallet: <code>{esc(linked)}</code>\nBalance: <b>{balance} NEAR</b>\n\nOpen the page to switch wallets."
-                self.send(chat_id, text, keyboard=[[{"text": "🔐 Connect NEAR wallet" if not linked else "🔐 Switch wallet",
-                                                     "url": hosted.wallet_link({"k": "link", "u": user_id}, ttl=86400)}]])
+                buttons = [[{"text": "🔐 Connect NEAR wallet" if not linked else "🔐 Switch wallet",
+                             "url": hosted.wallet_link({"k": "link", "u": user_id}, ttl=86400)}]]
+                if linked and isinstance(balance, str) and balance[:1].isdigit() and float(balance) < 0.3:
+                    buttons.append([{"text": "💧 Get 0.3 testnet NEAR from Mend", "callback_data": "cmd:faucet"}])
+                self.send(chat_id, text, keyboard=buttons)
+            elif command == "/faucet":
+                hosted.drip(user_id, notify)
             elif command == "/disconnect":
                 hosted.accounts.clear_github(user_id)
                 notify("GitHub disconnected; Mend deleted your token. "
@@ -510,6 +515,7 @@ class TelegramBot:
                 {"command": "start", "description": "What Mend does"},
                 {"command": "connect", "description": "Sign in to GitHub"},
                 {"command": "wallet", "description": "Connect your NEAR wallet and see its balance"},
+                {"command": "faucet", "description": "Get 0.3 testnet NEAR once, to fund a treasury"},
                 {"command": "try", "description": "Watch Mend fix a real bug on your fork"},
                 {"command": "watch", "description": "Protect one of your repositories"},
                 {"command": "repos", "description": "Your repositories and NEAR treasuries"},

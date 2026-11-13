@@ -310,3 +310,28 @@ class WalletLinking(PublicServiceTests):
 
         self.say(111, "/wallet")
         self.assertIn("alice.testnet", self.texts(111)[-1])
+
+
+class WatchConversation(PublicServiceTests):
+    def test_repo_from_text(self):
+        f = TelegramBot.repo_from_text
+        self.assertEqual(f("rampop01/https://github.com/Rampop01/Aegis-backend-ai"), "Rampop01/Aegis-backend-ai")
+        self.assertEqual(f("https://github.com/a-b/c.d.git"), "a-b/c.d")
+        self.assertEqual(f("  alice/shop "), "alice/shop")
+        self.assertEqual(f("git@github.com:alice/shop.git"), "alice/shop")
+        self.assertIsNone(f("hello there"))
+
+    def test_watch_asks_for_the_repo_then_uses_the_next_message(self):
+        self.accounts.set_github("111", "alice", "alice:token")
+        self.say(111, "/watch")
+        self.assertIn("Which repository", self.texts(111)[-1])
+        self.say(111, "https://github.com/alice/mend-demo-shop")
+        self.assertTrue(self.wait_for(lambda: any("is protected" in t for t in self.texts(111))), self.texts(111))
+
+    def test_pasted_link_starts_watch_and_other_text_gets_a_short_hint(self):
+        self.say(111, "hello")
+        self.assertIn("paste its link", self.texts(111)[-1])
+        self.assertFalse(any("Try it in two minutes" in t for t in self.texts(111)))
+        self.accounts.set_github("111", "alice", "alice:token")
+        self.say(111, "please protect https://github.com/alice/mend-demo-shop")
+        self.assertTrue(self.wait_for(lambda: any("is protected" in t for t in self.texts(111))), self.texts(111))

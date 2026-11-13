@@ -375,7 +375,8 @@ class HostedService:
             raise ServiceError(str(exc))
 
         def work() -> None:
-            notify(f"Connecting <b>{repo}</b>: copying it and running its tests…")
+            notify(f"Connecting <b>{repo}</b>: copying it, installing its dependencies and running its tests. "
+                   "The first time can take a few minutes for projects with large dependencies…")
             result = self._connect(telegram_id, repo, github, notify)
             endpoint = (self.settings.public_url or "https://YOUR-MEND-SERVER") + "/api/v1/incidents"
             notify(

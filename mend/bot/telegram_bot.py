@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import html
 import json
+import re
 import logging
 import ssl
 import threading
@@ -49,6 +50,7 @@ class TelegramBot:
         self._offset = 0
         self._thread: Optional[threading.Thread] = None
         self._in_flight: set = set()
+        self._awaiting_repo: Dict[str, bool] = {}  # users asked "which repository?" by /watch
         self._in_flight_lock = threading.Lock()
         # On a public service, anyone may use the bot; each incident belongs to one user.
         self.hosted = hosted
@@ -355,6 +357,19 @@ class TelegramBot:
     LEGACY_BUTTONS = {"Connect GitHub": "/connect", "Trigger Incident": "/try", "NEAR Treasury": "/status",
                       "Run Test Suite": "/help", "Ship Hotfix": "/help", "Reset Baseline": "/help"}
 
+    REPO_IN_TEXT = re.compile(r"github\.com[/:]([A-Za-z0-9-]{1,39})/([A-Za-z0-9._-]{1,100})", re.IGNORECASE)
+    BARE_REPO = re.compile(r"^\s*([A-Za-z0-9-]{1,39})/([A-Za-z0-9._-]{1,100})\s*$")
+
+    @classmethod
+    def repo_from_text(cls, text: str) -> Optional[str]:
+        """Finds a GitHub repository in free text: a github.com link anywhere, or a bare owner/repo."""
+        match = cls.REPO_IN_TEXT.search(text) or cls.BARE_REPO.match(text)
+        if not match:
+            return None
+        name = match.group(2)
+        name = name[:-4] if name.lower().endswith(".git") else name
+        return f"{match.group(1)}/{name.rstrip('.')}"
+
     def _clear_keyboard(self, chat_id: Any) -> None:
         """Removes a reply keyboard left by an older bot version. The carrier message is deleted right away."""
         sent = self.api("sendMessage", {"chat_id": chat_id, "text": "Menu updated.",
@@ -368,10 +383,22 @@ class TelegramBot:
         hosted.accounts.upsert(user_id, str(chat_id), user.get("username") or "")
         notify = lambda text: self.send(chat_id, text)
         if not command.startswith("/"):
-            label = " ".join(f"{command} {arg}".split()).strip()
-            legacy = next((cmd for name, cmd in self.LEGACY_BUTTONS.items() if label.endswith(name)), None)
-            self._clear_keyboard(chat_id)
-            command, arg = (legacy, "") if legacy else ("/help", "")
+            text = " ".join(f"{command} {arg}".split()).strip()
+            legacy = next((cmd for name, cmd in self.LEGACY_BUTTONS.items() if text.endswith(name)), None)
+            repo = self.repo_from_text(text)
+            if legacy:
+                self._clear_keyboard(chat_id)
+                command, arg = legacy, ""
+            elif repo and (self._awaiting_repo.pop(user_id, False) or "github.com" in text.lower()):
+                command, arg = "/watch", repo  # the answer to "which repository?", or a pasted GitHub link
+            elif self._awaiting_repo.pop(user_id, False):
+                notify("That doesn't look like a GitHub repository. Send it as <code>owner/repo</code> or paste its "
+                       "github.com link, or send /watch to start again.")
+                return
+            else:
+                notify("I can protect a GitHub repository: paste its link, or send <code>/watch owner/repo</code>. "
+                       "Send /help to see everything I can do.")
+                return
         try:
             if command in ("/start", "/help"):
                 if command == "/start":
@@ -418,10 +445,13 @@ class TelegramBot:
             elif command == "/try":
                 hosted.try_demo(user_id, notify)
             elif command == "/watch":
-                if not arg.strip():
-                    notify("Usage: <code>/watch owner/repo</code> (a public Python repository you can push to)")
+                repo = self.repo_from_text(arg) if arg.strip() else None
+                if not repo:
+                    self._awaiting_repo[user_id] = True
+                    notify("Which repository should Mend protect? Send <code>owner/repo</code> or paste its GitHub link.\n\n"
+                           "It must be a <b>public Python</b> repository with tests (pytest or unittest) that you can push to.")
                     return
-                hosted.watch(user_id, arg.strip(), notify)
+                hosted.watch(user_id, repo, notify)
             elif command in ("/repos", "/status"):
                 notify("\n".join(hosted.status_lines(user_id)))
             elif command == "/whoami":

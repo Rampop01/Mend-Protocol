@@ -215,6 +215,12 @@ class ParserAndSdkTests(unittest.TestCase):
         parsed = parse_test_output("FAILED tests/test_a.py::test_b - assert 1\n==== 1 failed, 3 passed in 0.12s ====\n", 1)
         self.assertEqual((parsed["tests_run"], parsed["tests_failed"]), (4, 1))
 
+    def test_pytest_quiet_output(self):
+        parsed = parse_test_output("..........\n92 passed, 2 warnings in 0.94s\n", 0)
+        self.assertEqual((parsed["tests_run"], parsed["tests_failed"]), (92, 0))
+        parsed = parse_test_output("FAILED tests/t.py::test_x - boom\n1 failed, 91 passed in 1.2s\n", 1)
+        self.assertEqual((parsed["tests_run"], parsed["tests_failed"], parsed["failed_tests"]), (92, 1, ["tests/t.py::test_x"]))
+
     def test_unknown_runner_counts_nothing(self):
         self.assertEqual(parse_test_output("ok", 0)["tests_run"], 0)
 

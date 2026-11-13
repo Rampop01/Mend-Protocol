@@ -85,7 +85,9 @@ def parse_test_output(output: str, returncode: int) -> Dict[str, Any]:
         failures = sum(int(n) for n in re.findall(r"(?:failures|errors)=(\d+)", output))
         return {"tests_run": total, "tests_failed": min(failures, total), "failed_tests": names}
 
-    summary = re.search(r"=+ (.*?) in [\d.]+s", output)
+    # pytest: "==== 1 failed, 3 passed in 0.12s ====" or, with -q, "92 passed, 2 warnings in 0.94s"
+    summaries = re.findall(r"^=*\s*((?:\d+ [a-z]+(?:, )?)+) in [\d.]+s", output, flags=re.MULTILINE)
+    summary = re.match(r"(.*)", summaries[-1]) if summaries else None
     if summary:  # pytest
         counts = {kind: int(n) for n, kind in re.findall(r"(\d+) (passed|failed|error|errors)", summary.group(1))}
         failed = counts.get("failed", 0) + counts.get("error", 0) + counts.get("errors", 0)
@@ -97,15 +99,16 @@ def parse_test_output(output: str, returncode: int) -> Dict[str, Any]:
     return {"tests_run": 0, "tests_failed": 0 if returncode == 0 else 1, "failed_tests": names}
 
 
-def _docker_argv(copy_root: Path, command: List[str], network: bool, extra_mounts: List[str]) -> List[str]:
+def _docker_argv(copy_root: Path, command: List[str], network: bool, extra_mounts: List[str],
+                 memory: str = "1g", tmp: str = "256m") -> List[str]:
     cmd = list(command)
     if cmd and Path(cmd[0]).name.startswith("python"):
         cmd[0] = "python"  # the interpreter inside the image
     argv = [
         "docker", "run", "--rm", "--init",
         "--network", "bridge" if network else "none",
-        "--memory", "768m", "--memory-swap", "768m", "--cpus", "1", "--pids-limit", "256",
-        "--read-only", "--tmpfs", "/tmp:rw,size=256m", "--security-opt", "no-new-privileges", "--cap-drop", "ALL",
+        "--memory", memory, "--memory-swap", memory, "--cpus", "1", "--pids-limit", "256",
+        "--read-only", "--tmpfs", f"/tmp:rw,size={tmp}", "--security-opt", "no-new-privileges", "--cap-drop", "ALL",
         "--user", "10001:10001",
         "-e", "MEND_DISABLED=1", "-e", "PYTHONDONTWRITEBYTECODE=1", "-e", "HOME=/tmp",
         "-e", "PYTHONPATH=/deps:/mend-sdk",
@@ -131,8 +134,9 @@ def _deps_dir(project: Project, copy_root: Path) -> Optional[Path]:
     os.chmod(target, 0o777)
     argv = _docker_argv(copy_root, ["python", "-m", "pip", "install", "--no-cache-dir", "--disable-pip-version-check",
                                     "--quiet", "--target", "/deps",
-                                    "-r", "requirements.txt"], network=True, extra_mounts=[f"{target}:/deps:rw"])
-    proc = subprocess.run(argv, capture_output=True, text=True, timeout=300)
+                                    "-r", "requirements.txt"], network=True, extra_mounts=[f"{target}:/deps:rw"],
+                        memory="1536m", tmp="1g")
+    proc = subprocess.run(argv, capture_output=True, text=True, timeout=600)
     if proc.returncode == 0:
         (target / ".ok").write_text("ok")
         return target

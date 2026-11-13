@@ -13,11 +13,17 @@ Built for NEAR HACKATHON: Build Beyond Boundaries. Tracks: **AI Swarms**, **Agen
 | **Demo repository** | [Rampop01/mend-demo-shop](https://github.com/Rampop01/mend-demo-shop), a checkout API with a real bug |
 | **A fix Mend delivered** | [Pull request #1](https://github.com/Rampop01/mend-demo-shop/pull/1) and its [on-chain payout](https://testnet.nearblocks.io/txns/8E7v3FoMU6jq4P88JkZZ2Rcv4BTub7FDqcM3HRbi3Pst) |
 
-![The Mend dashboard: a resolved incident, the guard's checks, and every agent step with its NEAR transaction](docs/dashboard.png)
+<p align="center">
+  <img src="docs/screenshots/telegram-welcome.png" width="32%" alt="The bot's welcome: what Mend does and three steps to try it">
+  <img src="docs/screenshots/telegram-settled.png" width="30%" alt="A fix approved on a phone: the agents are paid on NEAR and a pull request is opened">
+  <img src="docs/screenshots/wallet-fund.png" width="22%" alt="The wallet page: fund a bounty treasury from your own NEAR wallet">
+</p>
 
 ## Contents
 
 - [Try it in two minutes](#try-it-in-two-minutes)
+- [Screenshots](#screenshots)
+- [Bot commands](#bot-commands)
 - [The problem](#the-problem)
 - [How Mend works](#how-mend-works)
 - [What NEAR does](#what-near-does)
@@ -39,7 +45,7 @@ Mend runs as a public service. You need a Telegram account and a GitHub account.
 2. **Tap _1. Connect GitHub_.**
    The bot sends a code and a link to github.com/login/device. Enter the code and approve *Mend Protocol*. It asks for access to your **public** repositories only. The bot replies "Connected to GitHub as *you*".
 3. **Optional: tap _2. Connect NEAR wallet_.**
-   A page opens where you connect Meteor, MyNearWallet or Intear on **testnet**. The bot shows your account and balance. Need testnet NEAR? It's free from the [NEAR faucet](https://docs.near.org/getting-started/faucet).
+   A page opens where you connect Meteor, MyNearWallet or Intear on **testnet** (an account ending in `.testnet`), or type your account name. The bot shows your account and balance. Low on testnet NEAR? Send `/faucet` and Mend sends you 0.3 testnet NEAR once, or use the [NEAR faucet](https://docs.near.org/getting-started/faucet).
 4. **Tap _3. Try the demo_.**
    Mend forks the demo shop into your GitHub, runs its tests, and asks who funds the repository's bounty treasury:
    - **🔐 Use my NEAR wallet.** Your wallet signs one transaction that deposits 0.2 testnet NEAR and makes **you** the treasury's owner.
@@ -50,6 +56,31 @@ Mend runs as a public service. You need a Telegram account and a GitHub account.
    If you funded the treasury with your wallet, the button opens the page and your **wallet signs** the payout. Otherwise you tap Approve in Telegram. The card then lists the payouts to the agents with a link to the transaction, and a **pull request** appears on your fork.
 
 Daily limits per user: 3 `/try`, 10 incidents, 3 connected repositories. `/status` shows your wallet balance and your treasuries.
+
+## Screenshots
+
+These are real screenshots of the live bot. Personal chats are cropped out, and the app token is blacked out.
+
+| Start | A fix approved and paid on NEAR |
+| --- | --- |
+| <img src="docs/screenshots/telegram-welcome.png" width="420" alt="Welcome message with three buttons: Connect GitHub, Connect NEAR wallet, Try the demo"> | <img src="docs/screenshots/telegram-settled.png" width="340" alt="The fix card after approval: settled on NEAR with payouts to the forge, guard and recon agents, and buttons for the transaction and the pull request"> |
+| **Protecting a real repository with `/watch`** | **Testnet NEAR for your wallet with `/faucet`** |
+| <img src="docs/screenshots/telegram-watch.png" width="420" alt="/watch on Rampop01/Aegis-backend-ai: 92/92 tests pass, the SDK snippet, and the choice of who funds the treasury"> | <img src="docs/screenshots/telegram-wallet-faucet.png" width="420" alt="A linked testnet wallet with 0 NEAR receives 0.3 testnet NEAR from Mend, with the transaction link"> |
+| **The wallet page: fund your own treasury** | **Connecting a NEAR wallet** |
+| <img src="docs/screenshots/wallet-fund.png" width="300" alt="The wallet page: deposit 0.2 NEAR, bounty 0.05 NEAR, and what signing does"> | <img src="docs/screenshots/wallet-connect.png" width="300" alt="NEAR Wallet Selector with Meteor, MyNearWallet and Intear"> |
+
+## Bot commands
+
+| Command | What it does |
+| --- | --- |
+| `/start` | What Mend does, with buttons for the three steps |
+| `/connect` | Sign in to GitHub with a short code (public repositories only). `/disconnect` removes it |
+| `/wallet` | Link a NEAR testnet wallet and see its balance |
+| `/faucet` | Get 0.3 testnet NEAR once, enough to fund a treasury from your wallet |
+| `/try` | Fork the demo shop into your GitHub, crash it, and watch Mend fix it end to end |
+| `/watch owner/repo` | Protect one of your public Python repositories. You can also just paste its GitHub link |
+| `/status` | Your GitHub login, wallet balance and each repository's treasury |
+| `/help` | The welcome message again |
 
 ## The problem
 
@@ -148,7 +179,7 @@ Mend runs code it didn't write (your tests and AI-written patches) on behalf of 
 - **App tokens are scoped.** The token you put in your app can only report crashes for that one repository.
 - **Wallet claims are checked on-chain.** Links to the wallet page are signed and expire, and Mend verifies every claim the page makes (treasury owner, approval, patch hash) against the chain before acting.
 - **Stale crashes are not "fixed" twice.** If the crashing line no longer matches the code on GitHub, the incident is closed without payment.
-- **Abuse limits:** daily quotas per user, and one request at a time.
+- **Abuse limits:** daily quotas per user, and one request at a time. Free testnet NEAR from `/faucet` goes once per person and once per wallet, only to GitHub-connected users, with a daily cap.
 
 ## Protect your own project
 
@@ -188,7 +219,7 @@ pip install -e .
 python -m unittest discover -s tests -t .
 ```
 
-Expect `Ran 87 tests` and `OK`. The tests cover the whole pipeline against real temporary git repositories, including:
+Expect `Ran 103 tests` and `OK`. The tests cover the whole pipeline against real temporary git repositories, including:
 - a stranger running `/try`, where a different user's Approve tap is refused;
 - a hostile AI patch, which is blocked before it executes;
 - a wallet-owned treasury, which only a wallet signature can pay out.
@@ -204,6 +235,9 @@ python -m mend setup
 This takes about a minute and prints `Setup complete. Contract: https://testnet.nearblocks.io/address/escrow.mend-….testnet`. It creates a funded owner account from the testnet faucet, deploys the contract, and creates the four agent accounts with single-method keys. Keys go to `.mend/testnet.json`, which git ignores. You can skip this step; Mend then runs without escrow and says so on every incident.
 
 **3. Start the server and crash the example service.**
+
+![The self-hosted dashboard: a resolved incident, the guard's checks, and every agent step with its NEAR transaction](docs/dashboard.png)
+
 
 ```bash
 python -m mend serve                          # dashboard at http://127.0.0.1:8770
@@ -264,7 +298,7 @@ mend/sandbox.py            Runs tests in a throwaway copy, in a container on the
 mend/server.py, cli.py     HTTP API and command line
 deploy/                    Sandbox image, systemd service, server provisioning
 examples/payment_service/  Small example with a real bug, for running locally
-tests/                     87 tests
+tests/                     103 tests
 ```
 
 Transaction encoding and signing are implemented in Python using only the standard library plus PyNaCl for ed25519 signatures, with no NEAR SDK on the server. Every transaction hash Mend shows comes back from the NEAR RPC and can be opened in an explorer.

@@ -30,3 +30,4 @@ scripts/
 
 # Screenshots referenced by the README are tracked
 !docs/*.png
+!docs/screenshots/*.png

@@ -210,6 +210,7 @@ Everything above runs from this repository. You need Python 3.9+ on macOS or Lin
 ```bash
 git clone https://github.com/Rampop01/Mend-Protocol.git && cd Mend-Protocol
 python3 -m venv .venv && source .venv/bin/activate
+pip install --upgrade pip      # older pip (e.g. macOS's built-in Python) cannot install this project in editable mode
 pip install -e .
 ```
 

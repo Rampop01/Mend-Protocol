@@ -360,6 +360,10 @@ class HostedService:
         notify = lambda text: self.send(chat_id, text)
         if then == "try":
             self.crash_demo(telegram_id, project, notify)
+        elif then == "watch":
+            notify(f"🟢 <b>All set.</b> Mend is watching <b>{project.repo}</b>.\n\n"
+                   "When your app (with the snippet above) crashes, the agents fix it and the card comes here for "
+                   "your approval. The fix then arrives as a pull request. /status shows your treasuries anytime.")
 
     def _save(self, project: Project) -> None:
         from mend.connect import save_connected

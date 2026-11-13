@@ -71,6 +71,10 @@ class HostedService:
     def _github(self, telegram_id: str) -> GitHubClient:
         token = self.accounts.github_token(telegram_id)
         if not token:
+            code = self.pending_code(telegram_id)
+            if code:
+                raise ServiceError(f"Finish connecting GitHub first: open github.com/login/device and enter "
+                                   f"<code>{code}</code>. Send /connect for a new code.")
             raise ServiceError("Connect GitHub first: send /connect")
         return GitHubClient(token=token)
 
@@ -114,20 +118,51 @@ class HostedService:
     # -- GitHub sign-in ----------------------------------------------------
 
     def connect_github(self, telegram_id: str, notify: Notify, show_code: Callable[[str, str], None]) -> None:
-        def work() -> None:
-            flow = DeviceFlow(self.settings.github_client_id)
-            start = flow.start()
-            show_code(start["user_code"], start["verification_uri"])
-            token = flow.wait(start["device_code"], int(start.get("interval", 5)), int(start.get("expires_in", 900)))
-            me = GitHubClient(token=token).user()
-            if not me.get("ok"):
-                raise ServiceError(f"GitHub sign-in worked, but reading your profile failed: {me.get('error')}")
-            self.accounts.set_github(telegram_id, me["login"], token)
-            notify(f"✅ Connected to GitHub as <b>{me['login']}</b>.\n\n"
-                   "Send /try to see Mend fix a real bug on your own fork of the demo shop, "
-                   "or /watch owner/repo to protect one of your repositories.")
+        """Starts a GitHub sign-in. A new /connect replaces any sign-in still waiting."""
+        flow = DeviceFlow(self.settings.github_client_id)
+        start = flow.start()
+        self.accounts.save_pending(telegram_id, start["device_code"], start["user_code"],
+                                   int(start.get("interval", 5)), int(start.get("expires_in", 900)))
+        show_code(start["user_code"], start["verification_uri"])
+        self._wait_for_login(telegram_id, start["device_code"], int(start.get("interval", 5)),
+                             int(start.get("expires_in", 900)), notify)
 
-        self.run_async(telegram_id, "GitHub sign-in", work, notify)
+    def _wait_for_login(self, telegram_id: str, device_code: str, interval: int, expires_in: int, notify: Notify) -> None:
+        def still_wanted() -> bool:
+            return any(p["device_code"] == device_code for p in self.accounts.pending(telegram_id))
+
+        def target() -> None:
+            try:
+                token = DeviceFlow(self.settings.github_client_id).wait(device_code, interval, expires_in, still_wanted)
+                me = GitHubClient(token=token).user()
+                if not me.get("ok"):
+                    raise ServiceError(f"GitHub sign-in worked, but reading your profile failed: {me.get('error')}")
+                self.accounts.set_github(telegram_id, me["login"], token)
+                self.accounts.clear_pending(telegram_id, device_code)
+                notify(f"✅ Connected to GitHub as <b>{me['login']}</b>.\n\n"
+                       "Send /try to see Mend fix a real bug on your own fork of the demo shop, "
+                       "or /watch owner/repo to protect one of your repositories.")
+            except AccountError as exc:
+                if str(exc) != "superseded":
+                    self.accounts.clear_pending(telegram_id, device_code)
+                    notify(f"⚠️ {exc}")
+            except Exception:
+                logger.exception("GitHub sign-in failed for %s", telegram_id)
+                notify("⚠️ GitHub sign-in failed on the Mend server. Send /connect to try again.")
+
+        threading.Thread(target=target, daemon=True).start()
+
+    def resume_logins(self, notify_for: Callable[[str], Notify]) -> int:
+        """After a restart, keeps waiting for sign-ins that were in progress."""
+        pending = self.accounts.pending()
+        for p in pending:
+            self._wait_for_login(p["telegram_id"], p["device_code"], p["interval"], p["expires_in"],
+                                 notify_for(p["telegram_id"]))
+        return len(pending)
+
+    def pending_code(self, telegram_id: str) -> Optional[str]:
+        pending = self.accounts.pending(telegram_id)
+        return pending[0]["user_code"] if pending else None
 
     # -- /try --------------------------------------------------------------
 

@@ -80,6 +80,13 @@ class AccountStore:
                 github_token TEXT,
                 created_at REAL NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS pending_logins (
+                telegram_id TEXT PRIMARY KEY,
+                device_code TEXT NOT NULL,
+                user_code TEXT NOT NULL,
+                interval INTEGER NOT NULL,
+                expires_at REAL NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS usage (
                 telegram_id TEXT NOT NULL,
                 action TEXT NOT NULL,
@@ -147,6 +154,33 @@ class AccountStore:
             self._conn.commit()
         return True
 
+    def save_pending(self, telegram_id: str, device_code: str, user_code: str, interval: int, expires_in: int) -> None:
+        """Remembers a sign-in in progress, so a server restart can resume waiting for it."""
+        with self._lock:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO pending_logins VALUES (?, ?, ?, ?, ?)",
+                (telegram_id, self.vault.seal(device_code), user_code, interval, time.time() + expires_in),
+            )
+            self._conn.commit()
+
+    def pending(self, telegram_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        query = "SELECT telegram_id, device_code, user_code, interval, expires_at FROM pending_logins WHERE expires_at > ?"
+        args: List[Any] = [time.time()]
+        if telegram_id is not None:
+            query += " AND telegram_id = ?"
+            args.append(telegram_id)
+        with self._lock:
+            rows = self._conn.execute(query, args).fetchall()
+        return [{"telegram_id": r[0], "device_code": self.vault.open(r[1]), "user_code": r[2], "interval": r[3],
+                 "expires_in": int(r[4] - time.time())} for r in rows]
+
+    def clear_pending(self, telegram_id: str, device_code: Optional[str] = None) -> None:
+        with self._lock:
+            rows = self._conn.execute("SELECT device_code FROM pending_logins WHERE telegram_id = ?", (telegram_id,)).fetchall()
+            if device_code is None or any(self.vault.open(r[0]) == device_code for r in rows):
+                self._conn.execute("DELETE FROM pending_logins WHERE telegram_id = ?", (telegram_id,))
+                self._conn.commit()
+
     def count_users(self) -> Dict[str, int]:
         with self._lock:
             total = self._conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
@@ -183,12 +217,15 @@ class DeviceFlow:
             raise AccountError(f"GitHub refused the sign-in request: {data.get('error_description') or data.get('error')}")
         return data
 
-    def wait(self, device_code: str, interval: int, expires_in: int) -> str:
-        """Polls until the user approves. Returns the access token."""
+    def wait(self, device_code: str, interval: int, expires_in: int,
+             still_wanted: Optional[Any] = None) -> str:
+        """Polls until the user approves. Returns the access token. `still_wanted()` returning False cancels."""
         deadline = time.time() + min(expires_in, 900)
         delay = max(int(interval), 5)
         while time.time() < deadline:
             time.sleep(delay)
+            if still_wanted is not None and not still_wanted():
+                raise AccountError("superseded")
             data = _post_form(TOKEN_URL, {
                 "client_id": self.client_id, "device_code": device_code,
                 "grant_type": "urn:ietf:params:oauth:grant-type:device_code",

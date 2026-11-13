@@ -120,7 +120,8 @@ class PublicServiceTests(unittest.TestCase):
 
     def test_a_stranger_can_try_the_whole_loop_and_only_they_can_approve(self):
         self.say(111, "/start")
-        self.assertIn("Try it in two minutes", self.texts(111)[0])
+        self.assertTrue(any("Try it in two minutes" in t for t in self.texts(111)))
+        self.assertIn("deleteMessage", [m for m, _ in self.sent])  # the keyboard-removal note is cleaned up
 
         self.say(111, "/try")
         self.assertIn("Connect GitHub first", self.texts(111)[-1])
@@ -190,3 +191,41 @@ class OwnerTriesOwnDemo(PublicServiceTests):
         self.say(111, "/try")
         self.assertTrue(self.wait_for(lambda: any("opened" in t for t in self.texts(111))), self.texts(111))
         self.assertEqual(self.orch.store.list(1)[0]["repo"], mend.hosted.DEMO_UPSTREAM)
+
+
+class SignInAndLegacyButtons(unittest.TestCase):
+    def setUp(self):
+        tmp = temp_dir()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        self.settings = Settings(base_dir=root, db_path=root / "m.db", public=True, github_client_id="cid")
+        self.accounts = AccountStore(self.settings.db_path, Vault(Vault.new_key()))
+        self.orch = SwarmOrchestrator(self.settings, accounts=self.accounts)
+        self.hosted = HostedService(self.settings, self.orch, self.accounts)
+        self.bot = TelegramBot("t", "", [], self.orch, hosted=self.hosted)
+        self.sent = []
+        self.bot.api = lambda m, d=None, timeout=20.0: self.sent.append((m, d or {})) or {"ok": True, "result": {"message_id": 1}}
+
+    def test_old_keyboard_buttons_are_mapped_and_removed(self):
+        import mend.accounts
+        original = mend.accounts.DeviceFlow.start
+        mend.accounts.DeviceFlow.start = lambda self: {"device_code": "dc", "user_code": "ABCD-1234",
+                                                       "verification_uri": "https://github.com/login/device",
+                                                       "interval": 5, "expires_in": 900}
+        self.addCleanup(setattr, mend.accounts.DeviceFlow, "start", original)
+        import mend.hosted
+        self.hosted._wait_for_login = lambda *a, **k: None
+        self.bot.handle_message({"chat": {"id": 7, "type": "private"}, "from": {"id": 7}, "text": "🐙 Connect GitHub"})
+        markups = [d.get("reply_markup") for m, d in self.sent if m == "sendMessage"]
+        self.assertIn({"remove_keyboard": True}, markups)
+        self.assertTrue(any("ABCD-1234" in d.get("text", "") for m, d in self.sent))
+
+    def test_a_sign_in_in_progress_survives_a_restart(self):
+        self.accounts.save_pending("7", "device-secret", "ABCD-1234", 5, 900)
+        resumed = []
+        self.hosted._wait_for_login = lambda uid, code, interval, exp, notify: resumed.append((uid, code))
+        self.assertEqual(self.hosted.resume_logins(lambda uid: print), 1)
+        self.assertEqual(resumed, [("7", "device-secret")])
+        # Trying the demo meanwhile reminds the user of their code.
+        self.bot.handle_message({"chat": {"id": 7, "type": "private"}, "from": {"id": 7}, "text": "/try"})
+        self.assertIn("ABCD-1234", self.sent[-1][1]["text"])

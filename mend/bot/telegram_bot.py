@@ -334,13 +334,31 @@ class TelegramBot:
         "github.com/Rampop01/Mend-Protocol</i>"
     )
 
+    # Buttons from an older version of the bot that some chats still show.
+    LEGACY_BUTTONS = {"Connect GitHub": "/connect", "Trigger Incident": "/try", "NEAR Treasury": "/status",
+                      "Run Test Suite": "/help", "Ship Hotfix": "/help", "Reset Baseline": "/help"}
+
+    def _clear_keyboard(self, chat_id: Any) -> None:
+        """Removes a reply keyboard left by an older bot version. The carrier message is deleted right away."""
+        sent = self.api("sendMessage", {"chat_id": chat_id, "text": "Menu updated.",
+                                        "reply_markup": {"remove_keyboard": True}})
+        if sent.get("ok"):
+            self.api("deleteMessage", {"chat_id": chat_id, "message_id": sent["result"]["message_id"]})
+
     def _public_command(self, command: str, arg: str, chat_id: Any, user: Dict[str, Any]) -> None:
         hosted = self.hosted
         user_id = str(user.get("id"))
         hosted.accounts.upsert(user_id, str(chat_id), user.get("username") or "")
         notify = lambda text: self.send(chat_id, text)
+        if not command.startswith("/"):
+            label = " ".join(f"{command} {arg}".split()).strip()
+            legacy = next((cmd for name, cmd in self.LEGACY_BUTTONS.items() if label.endswith(name)), None)
+            self._clear_keyboard(chat_id)
+            command, arg = (legacy, "") if legacy else ("/help", "")
         try:
             if command in ("/start", "/help"):
+                if command == "/start":
+                    self._clear_keyboard(chat_id)
                 self.api("sendMessage", {"chat_id": chat_id, "text": self.WELCOME, "parse_mode": "HTML",
                                          "disable_web_page_preview": True,
                                          "reply_markup": {"inline_keyboard": [
@@ -348,7 +366,7 @@ class TelegramBot:
                                              [{"text": "2. Try the demo", "callback_data": "cmd:try"}]]}})
             elif command == "/connect":
                 account = hosted.accounts.get(user_id)
-                if account and account.github_login:
+                if account and account.github_login and arg.strip() != "again":
                     notify(f"Already connected as <b>{esc(account.github_login)}</b>. Send /try, or /disconnect first.")
                     return
 
@@ -415,6 +433,10 @@ class TelegramBot:
         if not me.get("ok"):
             raise RuntimeError(f"Telegram rejected the bot token: {me.get('description')}")
         logger.info("Telegram bot @%s connected", me["result"].get("username"))
+        if self.hosted is not None:
+            resumed = self.hosted.resume_logins(lambda uid: (lambda text: self.send(uid, text)))
+            if resumed:
+                logger.info("Resumed %d GitHub sign-in(s) in progress", resumed)
         commands = [
             {"command": "status", "description": "Treasury, agents and network"},
             {"command": "incidents", "description": "Recent incidents"},

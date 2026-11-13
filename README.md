@@ -57,6 +57,12 @@ Mend runs as a public service. You need a Telegram account and a GitHub account.
 
 Daily limits per user: 3 `/try`, 10 incidents, 3 connected repositories. `/status` shows your wallet balance and your treasuries.
 
+> **Why Mend pays for testers.** Mend runs on NEAR **testnet**, where tokens have no monetary value. Getting them still takes a wallet, a faucet and some waiting, and that stops most people before they see Mend work. So during the hackathon, Mend covers the cost for anyone trying it:
+> - **"Let Mend fund it"** opens a small treasury for your repository from Mend's own testnet account.
+> - **`/faucet`** sends 0.3 testnet NEAR to your wallet once, so you can try the wallet path without hunting for a faucet.
+>
+> Both have limits: once per person and per wallet, daily caps, and a reserve Mend always keeps. Sponsoring testers isn't the business model. The intended use is the wallet path, where **you** fund your repository's treasury and **your** wallet signs every payout. On mainnet, Mend would not sponsor treasuries.
+
 ## Screenshots
 
 These are real screenshots of the live bot. Personal chats are cropped out, and the app token is blacked out.
@@ -150,6 +156,7 @@ NEAR holds the money and the rules, so payment is enforced by the contract.
 | Who signs each payout | **Your wallet** (a Telegram tap cannot pay out) | Mend, when you tap Approve in Telegram |
 | What you need | A testnet wallet and ~0.3 testnet NEAR | Nothing |
 | Unused funds | Yours to withdraw at any time | Stay with Mend |
+| Meant for | Real use | Trying Mend on testnet without any setup ([why](#try-it-in-two-minutes)) |
 
 ## Proof on-chain
 

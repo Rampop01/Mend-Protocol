@@ -6,6 +6,19 @@ Built for NEAR HACKATHON: Build Beyond Boundaries. Tracks: **AI Swarms**, **Agen
 
 ![Dashboard showing a resolved incident, the guard's checks and the on-chain timeline](docs/dashboard.png)
 
+## Use it now: no install
+
+Mend runs as a public service. Open **[@mend_protocol_bot](https://t.me/mend_protocol_bot)** in Telegram:
+
+1. Send `/start`. Expect a welcome message with two buttons.
+2. Tap **Connect GitHub**. Expect a short code and a link to github.com/login/device. Enter the code there and approve *Mend Protocol*, which asks for access to **public** repositories only. Expect "Connected to GitHub as <you>".
+3. Tap **Try the demo**. Mend forks [Rampop01/mend-demo-shop](https://github.com/Rampop01/mend-demo-shop) into your GitHub and crashes its checkout with the coupon `SAVEBIG`. Within about 30 seconds you get a card with the fix, its test results and a guard score.
+4. Tap **Approve**. Expect the card to show the NEAR payouts to the agents with a link to the transaction, and a pull request on *your* fork.
+
+To protect your own Python repository, send `/watch owner/repo`. Mend replies with a two-line snippet for your app and a token that can only report crashes for that repository.
+
+Limits on the public service: public GitHub repositories, Python projects, 3 `/try` and 10 incidents per user per day. Bounties are NEAR **testnet** tokens paid from Mend's treasury, so you don't need a wallet. Each user's tests run in a container with no network, no secrets, a read-only filesystem and capped memory. A live run of step 3 on another account: [Queenode/mend-demo-shop#1](https://github.com/Queenode/mend-demo-shop/pull/1), [settlement](https://testnet.nearblocks.io/txns/6NEQrtUCsq2Fhk3dpWPjnWSmw56hCikEeavxsNm8fJ7B).
+
 ## The problem
 
 When a service crashes at night, monitoring tools page a human, who then has to find a laptop. Coding assistants can write the fix, but nothing ties their work to proof that the fix is correct, to a decision by the person accountable, or to payment for the work.
@@ -55,7 +68,7 @@ pip install -r requirements.txt
 python -m unittest discover -s tests -t .
 ```
 
-Expect `Ran 60 tests` and `OK`. These run the whole pipeline against a temporary project, including a hostile LLM patch that must be blocked before it executes.
+Expect `Ran 66` or more tests and `OK`. These run the whole pipeline against a temporary project, including a hostile LLM patch that must be blocked before it executes.
 
 ### 2. Create your own testnet deployment
 
@@ -143,12 +156,18 @@ A patch that passes the gate is scored out of 100:
 
 The highest score wins; ties go to the smaller diff.
 
+## Roadmap
+
+- **Bring your own wallet.** On the public service today, Mend funds each repository's testnet treasury and the repository owner approves from Telegram. Next: owners fund their treasury and sign `approve` from their own NEAR wallet, so Mend never holds the money.
+- **More languages.** Recon and the guard's static checks are Python-specific; the LLM agent, sandbox, escrow and Telegram flow are not. JavaScript/TypeScript is next.
+- **Private repositories,** through a GitHub App with per-repository permissions.
+
 ## Limits
 
 - **Python only.** Recon and the rule-based forge agent work on Python ASTs.
 - **Three deterministic rules:** division by zero, a missing dictionary key, and attribute or item access on `None`. Anything else needs the LLM forge agent.
 - **The sandbox is a temporary copy, not a security boundary.** Tests run as the same OS user with secrets removed from the environment. Run Mend in a container if you point it at code you do not trust.
-- **The server holds the owner key** so that an approval from Telegram can release funds. In production the owner would sign `approve` from their own wallet.
+- **The server holds the owner key** so that an approval from Telegram can release funds. See the roadmap: owners will sign `approve` from their own wallet.
 - **Testnet.** The contract has unit tests but no audit.
 - **Same-machine paths.** The SDK reports file paths from the running process and the server maps them onto its registered project roots.
 - With an LLM key set, the crashing file's source is sent to the configured LLM provider.
@@ -165,7 +184,7 @@ mend/server.py             HTTP API and dashboard
 mend/cli.py                setup, connect, serve, status, approve, reject
 mend/connect.py            GitHub repository workspaces
 examples/payment_service/  example service with a real bug and a test suite
-tests/                     60 Python tests
+tests/                     Python tests, including the public /try flow
 ```
 
 Rebuild the contract with `contracts/build.sh` (needs `rustup`; uses `wasm-opt` if installed) and test it with `cargo test` in `contracts/bounty_escrow`.

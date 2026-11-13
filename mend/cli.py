@@ -117,7 +117,8 @@ def cmd_connect(args: argparse.Namespace, settings: Settings) -> None:
               f"max bounty {yocto_to_near(result['treasury']['max_bounty'])} NEAR per incident.")
     print("Restart `mend serve` if it is running. In your app:\n")
     print("    from mend.sdk import init_mend")
-    print(f'    init_mend(repo="{result["repo"]}")')
+    print(f'    init_mend(repo="{result["repo"]}", token="{result["ingest_token"]}")')
+    print("\nThe token only lets an app report crashes for this repository. Keep it out of git.")
 
 
 def cmd_projects(args: argparse.Namespace, settings: Settings) -> None:

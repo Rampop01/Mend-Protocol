@@ -1,0 +1,21 @@
+[Unit]
+Description=Mend Protocol
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+User=mend
+Group=mend
+WorkingDirectory=/opt/mend
+ExecStart=/opt/mend/.venv/bin/python -m mend serve
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+# The service user can start sandbox containers but cannot write outside its own directories.
+ProtectSystem=strict
+ReadWritePaths=/opt/mend /home/mend
+PrivateTmp=false
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

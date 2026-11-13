@@ -54,11 +54,13 @@ class SwarmOrchestrator:
         escrow: Optional[EscrowClient] = None,
         llm: Optional[LLMClient] = None,
         github: Optional[GitHubClient] = None,
+        accounts: Optional[Any] = None,
     ) -> None:
         self.settings = settings
         self.store = store or IncidentStore(settings.db_path)
         self.escrow = escrow
         self.github = github or GitHubClient(token=settings.github_token)
+        self.accounts = accounts  # AccountStore on a public service
         self.recon = ReconAgent(settings)
         self.guard = GuardAgent()
         self.rule_forge = RuleForge()
@@ -116,7 +118,16 @@ class SwarmOrchestrator:
     # Intake
     # ------------------------------------------------------------------
 
-    def report(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    def github_for(self, project: Project) -> GitHubClient:
+        """A project connected by a user is accessed with that user's own GitHub token."""
+        if project.owner_telegram_id and self.accounts is not None:
+            token = self.accounts.github_token(project.owner_telegram_id)
+            if not token:
+                raise IncidentError("The owner of this project has disconnected GitHub")
+            return GitHubClient(token=token)
+        return self.github
+
+    def report(self, payload: Dict[str, Any], project_hint: Optional[Project] = None) -> Dict[str, Any]:
         """Validates a crash report and queues it. Returns the incident record."""
         frames = payload.get("frames")
         if not isinstance(frames, list) or not frames:
@@ -127,7 +138,12 @@ class SwarmOrchestrator:
             raise IncidentError("error_type must be an exception class name")
         error_message = str(payload.get("error_message") or "")[:2000]
 
-        located = locate_frame(self.settings, frames, repo_hint=payload.get("repo"))
+        if project_hint is not None:
+            # A per-project SDK token may only report crashes in its own project.
+            scoped = type(self.settings)(base_dir=self.settings.base_dir, projects=[project_hint])
+            located = locate_frame(scoped, frames, repo_hint=project_hint.repo)
+        else:
+            located = locate_frame(self.settings, frames, repo_hint=payload.get("repo"))
         if located is None:
             raise IncidentError(
                 "No traceback frame belongs to a registered project. "
@@ -137,12 +153,21 @@ class SwarmOrchestrator:
         rel_path = project.relative(file_path)
         fingerprint = crash_fingerprint(project.repo, rel_path, line_number, error_type)
 
+        owner = project.owner_telegram_id
+        chat_id = ""
+        if owner and self.accounts is not None:
+            user = self.accounts.get(owner)
+            chat_id = user.chat_id if user else ""
+
         existing = self.store.find_open(fingerprint)
         if existing:
             existing["occurrences"] = existing.get("occurrences", 1) + 1
             existing["updated_at"] = time.time()
             self.store.save(existing)
             return existing
+        if owner and self.accounts is not None and self.settings.public:
+            if not self.accounts.take_quota(owner, "incident", self.settings.limit_incidents_per_day):
+                raise IncidentError("Daily incident limit reached for this project's owner; try again tomorrow")
 
         raw_locals = frame.get("locals") or payload.get("frame_locals")
         frame_locals = (
@@ -173,6 +198,8 @@ class SwarmOrchestrator:
             "resolution": None,
             "error": None,
             "telegram": None,
+            "owner_telegram_id": owner,
+            "chat_id": chat_id,
             "pull_request": None,
         }
         self._note(incident, "sdk", f"Crash received: {error_type} at {rel_path}:{line_number}")
@@ -200,8 +227,8 @@ class SwarmOrchestrator:
         if project.managed:
             # Analyse exactly what is on GitHub, so the fix applies cleanly as a pull request.
             try:
-                commit = sync_workspace(project, token=self.github.token)
-            except ConnectError as exc:
+                commit = sync_workspace(project, token=self.github_for(project).token)
+            except (ConnectError, IncidentError) as exc:
                 self._fail(incident, f"Could not sync {project.repo} from GitHub: {exc}")
                 return
             incident["commit"] = commit
@@ -394,12 +421,13 @@ class SwarmOrchestrator:
 
             # Connected repositories receive the fix as a pull request, opened before any money moves.
             # If the payout then fails, the PR is kept and a retry reuses it.
+            github = self.github_for(project)
             if project.managed:
                 if not incident.get("pull_request"):
-                    if not self.github.token:
+                    if not github.token:
                         self._abort_approval(incident)
                         raise IncidentError("Cannot open a pull request: no GitHub token on the Mend server")
-                    result = self.github.open_fix_pull_request(
+                    result = github.open_fix_pull_request(
                         repo=project.repo, base_branch=project.base_branch,
                         branch=f"mend/{incident_id.lower()}", rel_path=incident["rel_path"],
                         original_sha256=incident["recon"]["source_sha256"],
@@ -481,7 +509,7 @@ class SwarmOrchestrator:
             lines += [f"- {p['role']}: {p['amount_near']} NEAR to `{p['account']}`" for p in resolution["payouts"]]
         else:
             lines = [f"Approved by {resolution['approver']}. " + " ".join(resolution["notes"])]
-        result = self.github.comment(project.repo, pr["number"], "\n".join(lines))
+        result = self.github_for(project).comment(project.repo, pr["number"], "\n".join(lines))
         if not result.get("ok"):
             resolution["notes"].append(f"Could not comment on the pull request: {result.get('error')}")
 

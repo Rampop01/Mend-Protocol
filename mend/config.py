@@ -44,6 +44,8 @@ class Project:
     # Managed projects are clones Mend owns (created by `mend connect`). Mend keeps them
     # in sync with GitHub and delivers fixes only as pull requests.
     managed: bool = False
+    owner_telegram_id: str = ""   # on a public service: the user who connected it
+    ingest_token_hash: str = ""   # sha256 of the project's SDK token
 
     def contains(self, path: Path) -> bool:
         try:
@@ -80,6 +82,16 @@ class Settings:
     near_keys_file: Path = Path(".mend/testnet.json")
     bounty_near: str = "0.25"
     connected_projects_file: Path = Path(".mend/projects.json")
+    # Public service (MEND_PUBLIC=1): anyone can use the Telegram bot.
+    public: bool = False
+    public_url: str = ""
+    secret_key: str = ""
+    github_client_id: str = ""
+    treasury_deposit_near: str = "2"
+    max_bounty_near: str = "0.5"
+    limit_tries_per_day: int = 3
+    limit_incidents_per_day: int = 10
+    limit_repos_per_user: int = 3
     workspaces_dir: Path = Path(".mend/workspaces")
 
     def project_for(self, path: Path) -> Optional[Project]:
@@ -121,6 +133,8 @@ def _parse_projects(path: Path, managed: bool) -> List[Project]:
                 base_branch=entry.get("base_branch"),
                 sandbox_ignore=[str(x) for x in entry.get("sandbox_ignore", [])],
                 managed=managed,
+                owner_telegram_id=str(entry.get("owner_telegram_id") or ""),
+                ingest_token_hash=str(entry.get("ingest_token_hash") or ""),
             )
         )
     return projects
@@ -135,7 +149,7 @@ def load_projects(settings: "Settings", projects_file: Path) -> List[Project]:
         known = {p.repo.lower() for p in projects}
         projects += [p for p in _parse_projects(settings.connected_projects_file, managed=True)
                      if p.repo.lower() not in known]
-    if not projects:
+    if not projects and not settings.public:
         raise SystemExit(
             "No projects configured. Run `mend connect owner/repo`, or list a local project in mend.projects.json."
         )
@@ -178,6 +192,15 @@ def load_settings(base_dir: Optional[Path] = None, require_projects: bool = True
         near_network=env.get("NEAR_NETWORK", "testnet"),
         near_keys_file=rel(env.get("MEND_KEYS_FILE", ".mend/testnet.json")),
         bounty_near=env.get("MEND_BOUNTY_NEAR", "0.25"),
+        public=env.get("MEND_PUBLIC", "0") == "1",
+        public_url=env.get("MEND_PUBLIC_URL", "").rstrip("/"),
+        secret_key=env.get("MEND_SECRET_KEY", ""),
+        github_client_id=env.get("GITHUB_CLIENT_ID", ""),
+        treasury_deposit_near=env.get("MEND_TREASURY_DEPOSIT_NEAR", "2"),
+        max_bounty_near=env.get("MEND_MAX_BOUNTY_NEAR", "0.5"),
+        limit_tries_per_day=int(env.get("MEND_LIMIT_TRIES_PER_DAY", "3")),
+        limit_incidents_per_day=int(env.get("MEND_LIMIT_INCIDENTS_PER_DAY", "10")),
+        limit_repos_per_user=int(env.get("MEND_LIMIT_REPOS_PER_USER", "3")),
     )
     settings.connected_projects_file = base / ".mend" / "projects.json"
     settings.workspaces_dir = base / ".mend" / "workspaces"
@@ -188,4 +211,6 @@ def load_settings(base_dir: Optional[Path] = None, require_projects: bool = True
         settings.github_token_source = "gh CLI login" if settings.github_token else ""
     if require_projects:
         settings.projects = load_projects(settings, rel(env.get("MEND_PROJECTS_FILE", "mend.projects.json")))
+        if settings.public and (not settings.secret_key or not settings.github_client_id or not settings.ingest_token):
+            raise SystemExit("MEND_PUBLIC=1 needs MEND_SECRET_KEY, GITHUB_CLIENT_ID and MEND_INGEST_TOKEN")
     return settings

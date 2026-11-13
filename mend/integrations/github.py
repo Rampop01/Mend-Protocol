@@ -131,6 +131,19 @@ class GitHubClient:
             "can_push": bool((info.get("permissions") or {}).get("push")),
         }
 
+    def fork(self, repo: str) -> Dict[str, Any]:
+        """Forks `repo` into the token owner's account (returns the existing fork if there is one)."""
+        status, data = self._request("POST", f"repos/{repo}/forks", {"default_branch_only": True})
+        if status not in (200, 202):
+            return {"ok": False, "error": self._error(status, data)}
+        return {"ok": True, "full_name": data.get("full_name"), "default_branch": data.get("default_branch", "main")}
+
+    def user(self) -> Dict[str, Any]:
+        status, data = self._request("GET", "user")
+        if status != 200:
+            return {"ok": False, "error": self._error(status, data)}
+        return {"ok": True, "login": data.get("login")}
+
     def comment(self, repo: str, number: int, body: str) -> Dict[str, Any]:
         status, data = self._request("POST", f"repos/{repo}/issues/{number}/comments", {"body": body})
         if status not in (200, 201):

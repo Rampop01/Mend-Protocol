@@ -1,0 +1,1 @@
+"""A small checkout service."""

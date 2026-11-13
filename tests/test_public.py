@@ -1,0 +1,183 @@
+"""
+The public service, end to end: a Telegram user runs /try and approves the fix.
+Git, the sandbox and the swarm are real; the GitHub API, Telegram and NEAR are test doubles.
+"""
+import shutil
+import subprocess
+import time
+import unittest
+from pathlib import Path
+
+from mend.accounts import AccountStore, Vault
+from mend.bot.telegram_bot import TelegramBot
+from mend.config import Settings
+from mend.hosted import HostedService
+from mend.swarm.orchestrator import SwarmOrchestrator
+import json
+
+from tests.helpers import RecordingEscrow, ScriptedLLM, temp_dir
+
+FIXTURE = Path(__file__).parent / "fixtures" / "demo_shop"
+
+
+def git(cwd, *args):
+    subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *args], cwd=cwd, check=True, capture_output=True)
+
+
+class FakeGitHub:
+    """GitHub API double. `prs` is shared so tests can see which token opened which PR."""
+
+    prs = []
+
+    def __init__(self, token=""):
+        self.token = token
+
+    def get_repo(self, repo):
+        return {"ok": True, "full_name": repo, "default_branch": "main", "private": False,
+                "clone_url": "unused", "can_push": repo.startswith(self.token.split(":")[0] + "/")}
+
+    def fork(self, repo):
+        return {"ok": True, "full_name": f"{self.token.split(':')[0]}/mend-demo-shop", "default_branch": "main"}
+
+    def user(self):
+        return {"ok": True, "login": self.token.split(":")[0]}
+
+    def open_fix_pull_request(self, **kw):
+        FakeGitHub.prs.append((self.token, kw))
+        return {"ok": True, "pr_url": f"https://github.com/{kw['repo']}/pull/1", "pr_number": 1, "branch": kw["branch"]}
+
+    def comment(self, repo, number, body):
+        return {"ok": True}
+
+
+class PublicServiceTests(unittest.TestCase):
+    def setUp(self):
+        tmp = temp_dir()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        seed = root / "seed"
+        shutil.copytree(FIXTURE, seed)
+        git(seed, "init", "-q", "-b", "main")
+        git(seed, "add", ".")
+        git(seed, "commit", "-q", "-m", "demo shop")
+        self.remote = root / "remote.git"
+        subprocess.run(["git", "clone", "-q", "--bare", str(seed), str(self.remote)], check=True)
+
+        self.settings = Settings(base_dir=root, db_path=root / "mend.db", public=True,
+                                 connected_projects_file=root / ".mend" / "projects.json",
+                                 workspaces_dir=root / ".mend" / "workspaces", github_client_id="cid",
+                                 bounty_near="0.05", limit_tries_per_day=1)
+        self.accounts = AccountStore(self.settings.db_path, Vault(Vault.new_key()))
+        self.escrow = RecordingEscrow([])
+        fix = json.dumps({"rationale": "Treat a malformed coupon as no discount.", "edits": [{
+            "search": "    percent = int(code[4:])\n",
+            "replace": "    try:\n        percent = int(code[4:])\n    except ValueError:\n        return 0\n"}]})
+        self.orch = SwarmOrchestrator(self.settings, escrow=self.escrow, accounts=self.accounts, llm=ScriptedLLM(fix))
+        self.orch.start()
+        self.addCleanup(self.orch.stop)
+        self.hosted = HostedService(self.settings, self.orch, self.accounts)
+        self.hosted.clone_url_for = lambda repo: str(self.remote)
+
+        # Route every GitHub client the code creates to the double.
+        import mend.connect, mend.hosted, mend.swarm.orchestrator
+        for module in (mend.connect, mend.hosted, mend.swarm.orchestrator):
+            self._patch(module, "GitHubClient", FakeGitHub)
+        FakeGitHub.prs = []
+        import mend.integrations.escrow as escrow_module
+        self._patch(escrow_module, "register_repo_treasury",
+                    lambda *a, **k: {"balance": str(15 * 10**22), "max_bounty": str(10**23)})
+        self.settings.near_keys_file = root / "keys.json"
+        self.settings.near_keys_file.write_text("{}")
+
+        self.bot = TelegramBot("token", "", [], self.orch, hosted=self.hosted)
+        self.sent = []
+
+        def api(method, data=None, timeout=20.0):
+            self.sent.append((method, data or {}))
+            return {"ok": True, "result": {"message_id": len(self.sent)}}
+
+        self.bot.api = api
+
+    def _patch(self, module, name, value):
+        original = getattr(module, name)
+        setattr(module, name, value)
+        self.addCleanup(setattr, module, name, original)
+
+    def say(self, user_id, text):
+        self.bot.handle_message({"chat": {"id": user_id, "type": "private"}, "from": {"id": user_id, "username": f"u{user_id}"},
+                                 "text": text})
+
+    def texts(self, chat_id):
+        return [d.get("text", "") for m, d in self.sent if m in ("sendMessage", "editMessageText") and str(d.get("chat_id")) == str(chat_id)]
+
+    def wait_for(self, predicate, timeout=60):
+        end = time.time() + timeout
+        while time.time() < end:
+            if predicate():
+                return True
+            time.sleep(0.1)
+        return False
+
+    def test_a_stranger_can_try_the_whole_loop_and_only_they_can_approve(self):
+        self.say(111, "/start")
+        self.assertIn("Try it in two minutes", self.texts(111)[0])
+
+        self.say(111, "/try")
+        self.assertIn("Connect GitHub first", self.texts(111)[-1])
+
+        self.accounts.set_github("111", "alice", "alice:token")
+        self.say(111, "/try")
+        self.assertTrue(self.wait_for(lambda: any("Incident" in t and "opened" in t for t in self.texts(111))),
+                        self.texts(111))
+        self.orch.wait_idle()
+        incident = self.orch.store.list(1)[0]
+        self.assertEqual(incident["repo"], "alice/mend-demo-shop")
+        self.assertEqual(incident["error_type"], "ValueError")
+        self.assertEqual(incident["owner_telegram_id"], "111")
+        self.assertEqual(incident["status"], "AWAITING_APPROVAL", incident.get("error"))
+        self.assertEqual(self.escrow.calls[0], ("open_incident", incident["incident_id"], "0.05"))
+        self.assertTrue(any("Fix ready for review" in t for t in self.texts(111)))
+
+        # Someone else cannot approve Alice's fix, even with the right button data.
+        tap = lambda uid: self.bot.handle_callback({"id": "q", "data": f"approve:{incident['incident_id']}",
+                                                    "from": {"id": uid, "username": f"u{uid}"},
+                                                    "message": {"chat": {"id": uid}, "message_id": 5}})
+        tap(222)
+        self.assertEqual(self.orch.store.get(incident["incident_id"])["status"], "AWAITING_APPROVAL")
+
+        tap(111)
+        self.assertTrue(self.wait_for(lambda: self.orch.store.get(incident["incident_id"])["status"] == "RESOLVED"))
+        token, pr = FakeGitHub.prs[0]
+        self.assertEqual(token, "alice:token")  # opened with Alice's own GitHub access
+        self.assertEqual(pr["repo"], "alice/mend-demo-shop")
+        self.assertIn("except ValueError", pr["patched_source"])
+        self.assertEqual(self.escrow.calls[-1][0], "approve")
+
+    def test_daily_limit_and_one_request_at_a_time(self):
+        self.accounts.set_github("111", "alice", "alice:token")
+        self.say(111, "/try")
+        self.say(111, "/try")
+        self.assertTrue(any("Still working" in t or "times today" in t for t in self.texts(111)))
+
+    def test_project_tokens_only_report_for_their_own_project(self):
+        self.accounts.set_github("111", "alice", "alice:token")
+        self.say(111, "/watch alice/mend-demo-shop")
+        self.assertTrue(self.wait_for(lambda: any("is protected" in t for t in self.texts(111))), self.texts(111))
+        message = next(t for t in self.texts(111) if "is protected" in t)
+        self.assertIn('token="mend_', message)
+        project = self.settings.projects[0]
+        self.assertEqual(project.owner_telegram_id, "111")
+        self.assertTrue(project.ingest_token_hash)
+
+    def test_cannot_watch_someone_elses_repo(self):
+        self.accounts.set_github("111", "alice", "alice:token")
+        self.say(111, "/watch bob/private-stuff")
+        self.assertTrue(self.wait_for(lambda: any("cannot push" in t for t in self.texts(111))), self.texts(111))
+
+    def test_group_chats_are_ignored(self):
+        self.bot.handle_message({"chat": {"id": -5, "type": "group"}, "from": {"id": 1}, "text": "/start"})
+        self.assertEqual(self.sent, [])
+
+
+if __name__ == "__main__":
+    unittest.main()

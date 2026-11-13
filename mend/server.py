@@ -16,6 +16,7 @@ must carry `Authorization: Bearer <token>`.
 """
 from __future__ import annotations
 
+import hashlib
 import hmac
 import json
 import logging
@@ -95,7 +96,8 @@ class MendHandler(BaseHTTPRequestHandler):
         if not self.server.settings.is_loopback:
             return True
         host = (self.headers.get("Host") or "").rsplit(":", 1)[0].strip("[]")
-        return host in ("127.0.0.1", "localhost", "::1")
+        public = self.server.settings.public_url.split("://", 1)[-1].split("/", 1)[0].split(":", 1)[0]
+        return host in ("127.0.0.1", "localhost", "::1") or (bool(public) and host == public)
 
     def _authorized(self) -> bool:
         token = self.server.settings.ingest_token
@@ -188,14 +190,28 @@ class MendHandler(BaseHTTPRequestHandler):
             else:
                 self._json(200, orchestrator.public_view(incident))
 
+    def _project_for_token(self):
+        """A project's own SDK token: it may only report crashes for that project."""
+        supplied = self.headers.get("Authorization", "")
+        if not supplied.startswith("Bearer "):
+            return None
+        digest = hashlib.sha256(supplied[7:].strip().encode()).hexdigest()
+        for project in self.server.settings.projects:
+            if project.ingest_token_hash and hmac.compare_digest(project.ingest_token_hash, digest):
+                return project
+        return None
+
     def do_POST(self) -> None:
         if not self._host_allowed() or not self._same_origin():
             self._json(403, {"error": "Cross-origin request refused"})
             return
-        if not self._authorized():
-            self._json(401, {"error": "Missing or invalid bearer token"})
-            return
         path = self.path.split("?", 1)[0]
+        project_scope = None
+        if not self._authorized():
+            project_scope = self._project_for_token() if path == "/api/v1/incidents" else None
+            if project_scope is None:
+                self._json(401, {"error": "Missing or invalid bearer token"})
+                return
         orchestrator = self.server.orchestrator
         data = self._read_json()
         if data is None:
@@ -203,7 +219,7 @@ class MendHandler(BaseHTTPRequestHandler):
 
         try:
             if path == "/api/v1/incidents":
-                incident = orchestrator.report(data)
+                incident = orchestrator.report(data, project_hint=project_scope)
                 self._json(202, {
                     "incident_id": incident["incident_id"],
                     "status": incident["status"],
@@ -235,10 +251,19 @@ def build(settings: Settings) -> Tuple[MendServer, SwarmOrchestrator, Optional[T
             "Set a token, or use MEND_HOST=127.0.0.1."
         )
     escrow = EscrowClient.load(settings.near_keys_file)
-    orchestrator = SwarmOrchestrator(settings, escrow=escrow)
+    accounts = None
+    if settings.public:
+        from mend.accounts import AccountStore, Vault
+        accounts = AccountStore(settings.db_path, Vault(settings.secret_key))
+    orchestrator = SwarmOrchestrator(settings, escrow=escrow, accounts=accounts)
     bot: Optional[TelegramBot] = None
     if settings.telegram_token:
-        bot = TelegramBot(settings.telegram_token, settings.telegram_chat_id, settings.telegram_approver_ids, orchestrator)
+        hosted = None
+        if accounts is not None:
+            from mend.hosted import HostedService
+            hosted = HostedService(settings, orchestrator, accounts)
+        bot = TelegramBot(settings.telegram_token, settings.telegram_chat_id, settings.telegram_approver_ids,
+                          orchestrator, hosted=hosted)
     return MendServer(settings, orchestrator), orchestrator, bot
 
 

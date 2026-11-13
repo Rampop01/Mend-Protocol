@@ -295,7 +295,8 @@ def setup_testnet(
     return state
 
 
-def register_repo_treasury(keys_file: Path, repo: str, log: Callable[[str], None] = print) -> Dict[str, Any]:
+def register_repo_treasury(keys_file: Path, repo: str, log: Callable[[str], None] = print,
+                           deposit_near: str = TREASURY_DEPOSIT, max_bounty_near: str = MAX_BOUNTY) -> Dict[str, Any]:
     """
     Opens a treasury for `repo` on the deployed contract, funded by the owner,
     and allowlists this deployment's agents for it. Safe to call again.
@@ -309,11 +310,11 @@ def register_repo_treasury(keys_file: Path, repo: str, log: Callable[[str], None
     txs = state.setdefault("setup_txs", {})
 
     if rpc.view(contract_id, "get_repo", {"repo_id": repo}) is None:
-        log(f"Registering treasury for {repo} with {TREASURY_DEPOSIT} NEAR")
+        log(f"Registering treasury for {repo} with {deposit_near} NEAR")
         result = owner.call(
             contract_id, "register_repo",
-            {"repo_id": repo, "operator": accounts["operator"], "max_bounty": str(near_to_yocto(MAX_BOUNTY))},
-            deposit=near_to_yocto(TREASURY_DEPOSIT), wait_until="FINAL",
+            {"repo_id": repo, "operator": accounts["operator"], "max_bounty": str(near_to_yocto(max_bounty_near))},
+            deposit=near_to_yocto(deposit_near), wait_until="FINAL",
         )
         txs[f"register:{repo}"] = result.explorer_url
     registered = rpc.view(contract_id, "get_repo", {"repo_id": repo}) or {}

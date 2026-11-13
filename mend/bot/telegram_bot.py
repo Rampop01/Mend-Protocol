@@ -39,7 +39,8 @@ def esc(value: Any) -> str:
 
 
 class TelegramBot:
-    def __init__(self, token: str, chat_id: str, approver_ids: List[str], orchestrator: SwarmOrchestrator) -> None:
+    def __init__(self, token: str, chat_id: str, approver_ids: List[str], orchestrator: SwarmOrchestrator,
+                 hosted: Optional[Any] = None) -> None:
         self.token = token
         self.chat_id = str(chat_id).strip()
         self.approver_ids = {str(a) for a in approver_ids}
@@ -49,6 +50,8 @@ class TelegramBot:
         self._thread: Optional[threading.Thread] = None
         self._in_flight: set = set()
         self._in_flight_lock = threading.Lock()
+        # On a public service, anyone may use the bot; each incident belongs to one user.
+        self.hosted = hosted
         orchestrator.listeners.append(self.on_incident)
 
     # ------------------------------------------------------------------
@@ -86,9 +89,10 @@ class TelegramBot:
             return None
         return result["result"]["message_id"]
 
-    def edit(self, message_id: int, text: str, keyboard: Optional[List[List[Dict[str, str]]]] = None) -> None:
+    def edit(self, message_id: int, text: str, keyboard: Optional[List[List[Dict[str, str]]]] = None,
+             chat_id: Optional[str] = None) -> None:
         data: Dict[str, Any] = {
-            "chat_id": self.chat_id, "message_id": message_id, "text": text, "parse_mode": "HTML",
+            "chat_id": chat_id or self.chat_id, "message_id": message_id, "text": text, "parse_mode": "HTML",
             "disable_web_page_preview": True, "reply_markup": {"inline_keyboard": keyboard or []},
         }
         result = self.api("editMessageText", data)
@@ -100,16 +104,17 @@ class TelegramBot:
     # ------------------------------------------------------------------
 
     def on_incident(self, incident: Dict[str, Any], event: str) -> None:
-        if not self.chat_id:
+        chat_id = incident.get("chat_id") or self.chat_id
+        if not chat_id:
             return
         text, keyboard = self.render(incident)
         message_id = (incident.get("telegram") or {}).get("message_id")
         if message_id is None:
-            message_id = self.send(self.chat_id, text, keyboard)
+            message_id = self.send(chat_id, text, keyboard)
             if message_id is not None:
-                incident["telegram"] = {"message_id": message_id}
+                incident["telegram"] = {"message_id": message_id, "chat_id": str(chat_id)}
         else:
-            self.edit(message_id, text, keyboard)
+            self.edit(message_id, text, keyboard, chat_id=(incident.get("telegram") or {}).get("chat_id") or chat_id)
 
     def render(self, incident: Dict[str, Any]) -> Any:
         status = incident["status"]
@@ -201,7 +206,11 @@ class TelegramBot:
     # Updates
     # ------------------------------------------------------------------
 
-    def _authorized(self, chat_id: Any, user_id: Any) -> bool:
+    def _authorized(self, chat_id: Any, user_id: Any, incident: Optional[Dict[str, Any]] = None) -> bool:
+        owner = (incident or {}).get("owner_telegram_id")
+        if owner:
+            # A user's incident can only be decided by that user, in their private chat with the bot.
+            return str(user_id) == str(owner) and str(chat_id) == str(user_id)
         if not self.chat_id or str(chat_id) != self.chat_id:
             return False
         return not self.approver_ids or str(user_id) in self.approver_ids
@@ -211,10 +220,14 @@ class TelegramBot:
         chat_id = (message.get("chat") or {}).get("id")
         user = query.get("from") or {}
         action, _, incident_id = str(query.get("data") or "").partition(":")
+        if action == "cmd" and self.hosted is not None:
+            self.api("answerCallbackQuery", {"callback_query_id": query.get("id")})
+            self._public_command("/" + incident_id, "", chat_id, user)
+            return
         if action not in ("approve", "reject") or not incident_id:
             self.api("answerCallbackQuery", {"callback_query_id": query.get("id")})
             return
-        if not self._authorized(chat_id, user.get("id")):
+        if not self._authorized(chat_id, user.get("id"), self.orchestrator.store.get(incident_id)):
             self.api("answerCallbackQuery", {
                 "callback_query_id": query.get("id"), "text": "You are not an approver for this Mend server.",
                 "show_alert": True,
@@ -251,14 +264,14 @@ class TelegramBot:
                 else:
                     self.orchestrator.reject(incident_id, rejector=who)
             except IncidentError as exc:
-                self.send(self.chat_id, f"⚠️ {esc(exc)}")
+                self.send(chat_id, f"⚠️ {esc(exc)}")
                 current = self.orchestrator.store.get(incident_id)
                 if current is not None:
                     self.on_incident(current, "retry")  # puts the buttons back if it can be retried
                     self.orchestrator.store.save(current)
             except Exception:
                 logger.exception("Telegram %s failed", action)
-                self.send(self.chat_id, f"⚠️ {action.title()} of <code>{esc(incident_id)}</code> failed. See the server log.")
+                self.send(chat_id, f"⚠️ {action.title()} of <code>{esc(incident_id)}</code> failed. See the server log.")
             finally:
                 with self._in_flight_lock:
                     self._in_flight.discard(incident_id)
@@ -269,6 +282,12 @@ class TelegramBot:
         chat_id = (message.get("chat") or {}).get("id")
         user_id = (message.get("from") or {}).get("id")
         command = str(message.get("text") or "").split()[0].split("@")[0] if message.get("text") else ""
+        if self.hosted is not None:
+            if (message.get("chat") or {}).get("type") != "private":
+                return  # the public bot works in private chats only
+            args = str(message.get("text") or "").split(maxsplit=1)
+            self._public_command(command, args[1] if len(args) > 1 else "", chat_id, message.get("from") or {})
+            return
 
         if command in ("/start", "/whoami"):
             # Answered in any chat: this is how you find the ids to put in .env.
@@ -294,6 +313,78 @@ class TelegramBot:
                 f"<code>{i['incident_id']}</code> {esc(i['status'])}: {esc(i['error_type'])} at "
                 f"<code>{esc(i['rel_path'])}:{i['line_number']}</code>" for i in recent
             ))
+
+    # ------------------------------------------------------------------
+    # Public service commands
+    # ------------------------------------------------------------------
+
+    WELCOME = (
+        "<b>Mend</b> fixes production crashes with a team of AI agents, and pays them on <b>NEAR</b> "
+        "only when you approve.\n\n"
+        "🔍 <b>Recon</b> finds the broken line\n"
+        "🔧🤖 Two <b>Forge</b> agents compete to fix it (rules vs. AI)\n"
+        "🛡️ <b>Guard</b> re-runs every test and blocks unsafe code\n"
+        "📱 <b>You</b> approve here with one tap; the fix arrives as a GitHub pull request\n\n"
+        "<b>Try it in two minutes:</b>\n"
+        "1. /connect: sign in to GitHub (public repos only)\n"
+        "2. /try: Mend forks a demo shop into your GitHub, crashes its checkout, and fixes it\n\n"
+        "Then /watch owner/repo to protect your own Python project.\n"
+        "/repos · /status · /disconnect · /help\n\n"
+        "<i>Bounties are paid in NEAR testnet tokens from Mend's treasury. Open source: "
+        "github.com/Rampop01/Mend-Protocol</i>"
+    )
+
+    def _public_command(self, command: str, arg: str, chat_id: Any, user: Dict[str, Any]) -> None:
+        hosted = self.hosted
+        user_id = str(user.get("id"))
+        hosted.accounts.upsert(user_id, str(chat_id), user.get("username") or "")
+        notify = lambda text: self.send(chat_id, text)
+        try:
+            if command in ("/start", "/help"):
+                self.api("sendMessage", {"chat_id": chat_id, "text": self.WELCOME, "parse_mode": "HTML",
+                                         "disable_web_page_preview": True,
+                                         "reply_markup": {"inline_keyboard": [
+                                             [{"text": "1. Connect GitHub", "callback_data": "cmd:connect"}],
+                                             [{"text": "2. Try the demo", "callback_data": "cmd:try"}]]}})
+            elif command == "/connect":
+                account = hosted.accounts.get(user_id)
+                if account and account.github_login:
+                    notify(f"Already connected as <b>{esc(account.github_login)}</b>. Send /try, or /disconnect first.")
+                    return
+
+                def show_code(code: str, url: str) -> None:
+                    self.send(chat_id, (
+                        f"Open <b>{esc(url)}</b> and enter this code:\n\n<code>{esc(code)}</code>\n\n"
+                        "Mend asks for access to your <b>public</b> repositories, so it can fork the demo and open "
+                        "pull requests. I'll message you as soon as you approve."
+                    ), keyboard=[[{"text": "Open GitHub", "url": url}]])
+
+                hosted.connect_github(user_id, notify, show_code)
+            elif command == "/disconnect":
+                hosted.accounts.clear_github(user_id)
+                notify("GitHub disconnected; Mend deleted your token. "
+                       "You can also revoke access at github.com/settings/applications.")
+            elif command == "/try":
+                hosted.try_demo(user_id, notify)
+            elif command == "/watch":
+                if not arg.strip():
+                    notify("Usage: <code>/watch owner/repo</code> (a public Python repository you can push to)")
+                    return
+                hosted.watch(user_id, arg.strip(), notify)
+            elif command in ("/repos", "/status"):
+                notify("\n".join(hosted.status_lines(user_id)))
+            elif command == "/whoami":
+                notify(f"Your Telegram id: <code>{esc(user_id)}</code>")
+            else:
+                notify("I didn't recognise that. Send /help to see what I can do.")
+        except Exception as exc:  # ServiceError and friends carry a user-facing message
+            from mend.hosted import ServiceError
+            from mend.accounts import AccountError
+            if isinstance(exc, (ServiceError, AccountError)):
+                notify(f"⚠️ {esc(exc)}")
+            else:
+                logger.exception("Command %s failed", command)
+                notify("⚠️ Something went wrong on the Mend server. Please try again in a minute.")
 
     def _status_text(self) -> str:
         escrow = self.orchestrator.escrow
@@ -324,11 +415,21 @@ class TelegramBot:
         if not me.get("ok"):
             raise RuntimeError(f"Telegram rejected the bot token: {me.get('description')}")
         logger.info("Telegram bot @%s connected", me["result"].get("username"))
-        self.api("setMyCommands", {"commands": [
+        commands = [
             {"command": "status", "description": "Treasury, agents and network"},
             {"command": "incidents", "description": "Recent incidents"},
             {"command": "whoami", "description": "Show this chat's id and your user id"},
-        ]})
+        ]
+        if self.hosted is not None:
+            commands = [
+                {"command": "start", "description": "What Mend does"},
+                {"command": "connect", "description": "Sign in to GitHub"},
+                {"command": "try", "description": "Watch Mend fix a real bug on your fork"},
+                {"command": "watch", "description": "Protect one of your repositories"},
+                {"command": "repos", "description": "Your repositories and NEAR treasuries"},
+                {"command": "disconnect", "description": "Remove your GitHub access"},
+            ]
+        self.api("setMyCommands", {"commands": commands})
         self.running = True
 
         def loop() -> None:

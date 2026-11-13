@@ -10,6 +10,7 @@ branch.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import re
 import subprocess
@@ -103,6 +104,8 @@ def _save_connected(settings: Settings, project: Project) -> None:
         "test_command": project.test_command,
         "test_timeout": project.test_timeout,
         "base_branch": project.base_branch,
+        "owner_telegram_id": project.owner_telegram_id,
+        "ingest_token_hash": project.ingest_token_hash,
     })
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({"projects": entries}, indent=2) + "\n", encoding="utf-8")
@@ -117,6 +120,7 @@ def connect_repo(
     github: Optional[GitHubClient] = None,
     clone_url: Optional[str] = None,
     log: Callable[[str], None] = print,
+    owner_telegram_id: str = "",
 ) -> Dict[str, Any]:
     repo = normalize_repo(repo_name)
     github = github or GitHubClient(settings.github_token)
@@ -131,7 +135,14 @@ def connect_repo(
     branch = base_branch or info["default_branch"]
     root = (settings.workspaces_dir / repo.replace("/", "__")).resolve()
 
-    project = Project(repo=info["full_name"], root=root, test_command=[], base_branch=branch, managed=True)
+    existing = settings.project_by_repo(info["full_name"])
+    if existing is not None and existing.owner_telegram_id and existing.owner_telegram_id != owner_telegram_id:
+        raise ConnectError(f"{info['full_name']} is already connected to Mend by another user.")
+    project = Project(repo=info["full_name"], root=root, test_command=[], base_branch=branch, managed=True,
+                      owner_telegram_id=owner_telegram_id)
+    from mend.accounts import new_ingest_token
+    ingest_token = new_ingest_token()
+    project.ingest_token_hash = hashlib.sha256(ingest_token.encode()).hexdigest()
     if (root / ".git").is_dir():
         log(f"Updating the existing workspace {root}")
     else:
@@ -151,6 +162,8 @@ def connect_repo(
         )
     log(f"{baseline.tests_run - baseline.tests_failed}/{baseline.tests_run} tests pass on {branch} at {commit[:7]}")
     _save_connected(settings, project)
+    # Make the project live for a running server without a restart.
+    settings.projects = [p for p in settings.projects if p.repo.lower() != project.repo.lower()] + [project]
 
     treasury: Optional[Dict[str, Any]] = None
     if register_on_chain:
@@ -158,7 +171,9 @@ def connect_repo(
             log("NEAR is not set up yet, so no treasury was opened. Run `mend setup`, then `mend connect` again.")
         else:
             from mend.integrations.escrow import register_repo_treasury
-            treasury = register_repo_treasury(settings.near_keys_file, project.repo, log=log)
+            treasury = register_repo_treasury(settings.near_keys_file, project.repo, log=log,
+                                              deposit_near=settings.treasury_deposit_near,
+                                              max_bounty_near=settings.max_bounty_near)
 
     return {
         "repo": project.repo,
@@ -169,4 +184,6 @@ def connect_repo(
         "tests_run": baseline.tests_run,
         "tests_failed": baseline.tests_failed,
         "treasury": treasury,
+        "ingest_token": ingest_token,
+        "project": project,
     }

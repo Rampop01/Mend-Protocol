@@ -28,9 +28,17 @@ from mend.config import Project
 # MEND_SANDBOX=docker runs every command in a throwaway container: no network,
 # capped memory/CPU/processes, read-only system, non-root user. Used on the
 # hosted service, where Mend runs code from strangers' repositories.
-SANDBOX_MODE = os.environ.get("MEND_SANDBOX", "local")
-SANDBOX_IMAGE = os.environ.get("MEND_SANDBOX_IMAGE", "mend-sandbox:latest")
-DEPS_CACHE = Path(os.environ.get("MEND_DEPS_CACHE", str(Path.home() / ".cache" / "mend-deps")))
+# Read at call time, so the setting from .env applies however this module was imported.
+def sandbox_mode() -> str:
+    return os.environ.get("MEND_SANDBOX", "local")
+
+
+def _image() -> str:
+    return os.environ.get("MEND_SANDBOX_IMAGE", "mend-sandbox:latest")
+
+
+def _deps_cache() -> Path:
+    return Path(os.environ.get("MEND_DEPS_CACHE", str(Path.home() / ".cache" / "mend-deps")))
 SDK_DIR = Path(__file__).resolve().parent.parent  # contains the `mend` package
 
 # Never copied into a sandbox: VCS data, dependencies, build output and secrets.
@@ -106,7 +114,7 @@ def _docker_argv(copy_root: Path, command: List[str], network: bool, extra_mount
     ]
     for mount in extra_mounts:
         argv += ["-v", mount]
-    return argv + [SANDBOX_IMAGE, *cmd]
+    return argv + [_image(), *cmd]
 
 
 def _deps_dir(project: Project, copy_root: Path) -> Optional[Path]:
@@ -116,18 +124,20 @@ def _deps_dir(project: Project, copy_root: Path) -> Optional[Path]:
         return None
     import hashlib
     digest = hashlib.sha256(req.read_bytes()).hexdigest()[:16]
-    target = DEPS_CACHE / digest
+    target = _deps_cache() / digest
     if (target / ".ok").exists():
         return target
     target.mkdir(parents=True, exist_ok=True)
     os.chmod(target, 0o777)
-    argv = _docker_argv(copy_root, ["python", "-m", "pip", "install", "--no-cache-dir", "--target", "/deps",
+    argv = _docker_argv(copy_root, ["python", "-m", "pip", "install", "--no-cache-dir", "--disable-pip-version-check",
+                                    "--quiet", "--target", "/deps",
                                     "-r", "requirements.txt"], network=True, extra_mounts=[f"{target}:/deps:rw"])
     proc = subprocess.run(argv, capture_output=True, text=True, timeout=300)
     if proc.returncode == 0:
         (target / ".ok").write_text("ok")
         return target
-    raise OSError(f"Installing requirements.txt failed: {(proc.stderr or proc.stdout)[-300:]}")
+    lines = [l for l in (proc.stderr or proc.stdout).splitlines() if l.strip() and "[notice]" not in l]
+    raise OSError("Installing requirements.txt failed: " + " ".join(lines[-3:])[-300:])
 
 
 def run_in_copy(project: Project, command: List[str], overlay: Optional[Dict[str, str]] = None,
@@ -143,7 +153,7 @@ def run_in_copy(project: Project, command: List[str], overlay: Optional[Dict[str
             target.relative_to(copy_root.resolve())  # refuses paths that escape the copy
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(content, encoding="utf-8")
-        if SANDBOX_MODE == "docker":
+        if sandbox_mode() == "docker":
             for path in [workdir, *copy_root.rglob("*")]:
                 try:
                     os.chmod(path, 0o777 if path.is_dir() else 0o666)
@@ -159,7 +169,7 @@ def run_in_copy(project: Project, command: List[str], overlay: Optional[Dict[str
                               timeout=timeout or project.test_timeout)
         for stream in ("stdout", "stderr"):
             text = getattr(proc, stream).replace(str(copy_root), "<project>")
-            if SANDBOX_MODE == "docker":
+            if sandbox_mode() == "docker":
                 text = text.replace('"/work/', '"<project>/').replace(" /work/", " <project>/")
             setattr(proc, stream, text)
         return proc

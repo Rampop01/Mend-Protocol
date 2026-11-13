@@ -414,7 +414,7 @@ def serve(settings: Optional[Settings] = None) -> None:
     if settings.public:
         logger.info("Public service: anyone can use the Telegram bot; GitHub access is per user (device flow, client %s)",
                     settings.github_client_id[:6] + "…")
-        logger.info("Sandbox: %s", __import__("mend.sandbox", fromlist=["SANDBOX_MODE"]).SANDBOX_MODE)
+        logger.info("Sandbox: %s", __import__("mend.sandbox", fromlist=["sandbox_mode"]).sandbox_mode())
     else:
         logger.info("GitHub pull requests: %s", f"enabled ({settings.github_token_source})" if settings.github_token else "disabled (run `gh auth login` or set GITHUB_TOKEN)")
     if bot is not None:

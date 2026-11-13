@@ -158,8 +158,8 @@ def connect_repo(
     baseline = run_tests(project)
     if baseline.tests_run == 0:
         raise ConnectError(
-            f"The test command did not run any tests ({baseline.error or 'no test output recognised'}). "
-            "Pass --test-command to set it."
+            f"Mend could not run this repository's tests ({baseline.error or 'no test output recognised'}). "
+            "Mend needs a Python test suite (pytest or unittest) to prove each fix."
         )
     log(f"{baseline.tests_run - baseline.tests_failed}/{baseline.tests_run} tests pass on {branch} at {commit[:7]}")
     save_connected(settings, project)

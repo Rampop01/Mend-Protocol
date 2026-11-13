@@ -278,11 +278,16 @@ def serve(settings: Optional[Settings] = None) -> None:
         logger.info("Watching %s (%s)", project.repo, "GitHub, fixes as pull requests" if project.managed else "local checkout")
     logger.info("NEAR: %s", f"{escrow.network} contract {escrow.contract_id}" if escrow else "not configured (run `mend setup`)")
     logger.info("LLM forge agent: %s", f"enabled ({settings.llm_model})" if orchestrator.llm_forge.available else "disabled (set NEAR_AI_API_KEY)")
-    logger.info("GitHub pull requests: %s", f"enabled ({settings.github_token_source})" if settings.github_token else "disabled (run `gh auth login` or set GITHUB_TOKEN)")
+    if settings.public:
+        logger.info("Public service: anyone can use the Telegram bot; GitHub access is per user (device flow, client %s)",
+                    settings.github_client_id[:6] + "…")
+        logger.info("Sandbox: %s", __import__("mend.sandbox", fromlist=["SANDBOX_MODE"]).SANDBOX_MODE)
+    else:
+        logger.info("GitHub pull requests: %s", f"enabled ({settings.github_token_source})" if settings.github_token else "disabled (run `gh auth login` or set GITHUB_TOKEN)")
     if bot is not None:
         try:
             bot.start()
-            if not settings.telegram_chat_id:
+            if not settings.telegram_chat_id and not settings.public:
                 logger.warning("TELEGRAM_CHAT_ID is not set: send /start to the bot to find it")
         except RuntimeError as exc:
             logger.error("%s", exc)

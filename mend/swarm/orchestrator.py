@@ -255,6 +255,8 @@ class SwarmOrchestrator:
         elif project.repo not in self.escrow.repos:
             incident["chain"]["error"] = f"No treasury registered for {project.repo}"
             self._note(incident, "operator", incident["chain"]["error"])
+        elif not self._treasury_ready(project, incident):
+            pass  # _treasury_ready recorded why
         else:
             incident["chain"]["contract_id"] = self.escrow.contract_id
             tx = self._chain(
@@ -310,6 +312,25 @@ class SwarmOrchestrator:
         )
         self.store.save(incident)
         self._emit(incident, "awaiting_approval")
+
+    def _treasury_ready(self, project: Project, incident: Dict[str, Any]) -> bool:
+        """Checks the bounty can be reserved; tops up Mend-funded treasuries that ran low."""
+        try:
+            if self.escrow.has_funds_for(project.repo, incident["bounty_near"]):
+                return True
+            if not project.near_owner:
+                tx = self.escrow.top_up(project.repo, self.settings.treasury_deposit_near)
+                self._record_tx(incident, "operator", "deposit", tx,
+                                f"Treasury was low: Mend topped it up with {self.settings.treasury_deposit_near} NEAR")
+                return True
+        except NearError as exc:
+            incident["chain"]["error"] = f"Could not check the treasury: {exc}"
+            self._note(incident, "operator", incident["chain"]["error"])
+            return False
+        incident["chain"]["error"] = (f"The treasury for {project.repo} has less than the {incident['bounty_near']} NEAR "
+                                      f"bounty. Its owner {project.near_owner} can top it up with /status")
+        self._note(incident, "operator", incident["chain"]["error"])
+        return False
 
     def _evaluate(self, incident: Dict[str, Any], project: Project, report: ReconReport, forge: Any, source: str) -> Dict[str, Any]:
         strategy: str = forge.strategy

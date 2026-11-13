@@ -310,3 +310,22 @@ class TelegramTapTests(PipelineCase):
                              "message": {"chat": {"id": 42}, "message_id": 9}})
         self.assertTrue(calls[0][1]["show_alert"])
         self.assertEqual(orch.store.get(incident["incident_id"])["status"], "AWAITING_APPROVAL")
+
+
+class EmptyTreasuryTests(PipelineCase):
+    def test_an_empty_mend_funded_treasury_is_topped_up_before_the_incident_opens(self):
+        escrow = RecordingEscrow([self.project.repo])
+        escrow.register(self.project.repo)
+        escrow.treasuries[self.project.repo]["balance"] = "0"
+        incident = self.run_incident(self.orchestrator(escrow=escrow))
+        self.assertEqual([c[0] for c in escrow.calls][:2], ["deposit", "open_incident"])
+        self.assertTrue(incident["chain"]["enabled"])
+
+    def test_an_empty_wallet_owned_treasury_is_reported_not_faked(self):
+        escrow = RecordingEscrow([self.project.repo])
+        escrow.register(self.project.repo, owner="alice.testnet")
+        escrow.treasuries[self.project.repo]["balance"] = "0"
+        self.project.near_owner = "alice.testnet"
+        incident = self.run_incident(self.orchestrator(escrow=escrow))
+        self.assertNotIn("open_incident", [c[0] for c in escrow.calls])
+        self.assertIn("alice.testnet can top it up", incident["chain"]["error"])

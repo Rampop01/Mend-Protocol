@@ -142,7 +142,7 @@ class PublicServiceTests(unittest.TestCase):
         self.accounts.set_github("111", "alice", "alice:token")
         self.say(111, "/try")
         self.choose_mend_funding(111)
-        self.assertTrue(self.wait_for(lambda: any("Incident" in t and "opened" in t for t in self.texts(111))),
+        self.assertTrue(self.wait_for(lambda: any("Mend caught it" in t for t in self.texts(111))),
                         self.texts(111))
         self.orch.wait_idle()
         incident = self.orch.store.list(1)[0]
@@ -204,7 +204,7 @@ class OwnerTriesOwnDemo(PublicServiceTests):
         self.accounts.set_github("111", mend.hosted.DEMO_UPSTREAM.split("/")[0], "Rampop01:token")
         self.say(111, "/try")
         self.choose_mend_funding(111)
-        self.assertTrue(self.wait_for(lambda: any("opened" in t for t in self.texts(111))), self.texts(111))
+        self.assertTrue(self.wait_for(lambda: any("Mend caught it" in t for t in self.texts(111))), self.texts(111))
         self.assertEqual(self.orch.store.list(1)[0]["repo"], mend.hosted.DEMO_UPSTREAM)
 
 
@@ -268,7 +268,7 @@ class WalletOwnedTreasury(PublicServiceTests):
         # Alice's wallet really funded it: accepted, and the demo continues.
         self.escrow.register("alice/mend-demo-shop", owner="alice.testnet")
         self.hosted.wallet_funded("111", "alice/mend-demo-shop", "try", "alice.testnet")
-        self.assertTrue(self.wait_for(lambda: any("opened" in t for t in self.texts(111))), self.texts(111))
+        self.assertTrue(self.wait_for(lambda: any("Mend caught it" in t for t in self.texts(111))), self.texts(111))
         self.orch.wait_idle()
         incident = self.orch.store.list(1)[0]
         self.assertEqual(incident["near_owner"], "alice.testnet")

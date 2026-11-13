@@ -107,6 +107,8 @@ async function fund() {
         functionCall("register_repo", { repo_id: ctx.repo, operator: ctx.operator, max_bounty: ctx.max_bounty }, gas, BigInt(ctx.deposit)),
         functionCall("set_agents", { repo_id: ctx.repo, recon_agent: ctx.recon, guard_agent: ctx.guard, forge_agents: ctx.forges }, gas, BigInt(0)),
       ]);
+    } else if (needsTopUp()) {
+      await signAndSend([functionCall("deposit", { repo_id: ctx.repo }, gas, BigInt(ctx.deposit))]);
     }
     await confirmFunded();
   } catch (e) { busy = false; message = "⚠️ " + (e.message || e); render(); }
@@ -148,6 +150,8 @@ async function confirmApproved(hash) {
   }
 }
 
+function needsTopUp() { return ctx.already_owner && BigInt(ctx.treasury_balance || "0") < BigInt(ctx.bounty || "0"); }
+
 function fundView() {
   const enough = account && account.balance != null && BigInt(account.balance) > BigInt(ctx.deposit) + BigInt("50000000000000000000000");
   const owned = ctx.already_owner;
@@ -163,9 +167,10 @@ function fundView() {
       ? el("div", { class: "ok", style: "margin-top:12px;font-weight:600" }, "✅ Treasury funded from " + account.id + ". Go back to Telegram.")
       : owned && account && owned !== account.id
         ? el("div", { class: "err", style: "margin-top:12px" }, "This treasury is owned by " + owned + ". Connect that wallet.")
-        : el("button", { class: "primary", disabled: (!account || busy || (!owned && !enough)) ? "" : null, onclick: fund },
-             !account ? "Connect a wallet first" : owned ? "Confirm my treasury" :
-             enough ? "Fund treasury with " + ctx.deposit_near + " NEAR" : "Not enough testnet NEAR: use the faucet"),
+        : el("button", { class: "primary", disabled: (!account || busy || ((!owned || needsTopUp()) && !enough)) ? "" : null, onclick: fund },
+             !account ? "Connect a wallet first" : !enough && (!owned || needsTopUp()) ? "Not enough testnet NEAR: use the faucet" :
+             owned && needsTopUp() ? "Top up treasury with " + ctx.deposit_near + " NEAR" :
+             owned ? "Confirm my treasury" : "Fund treasury with " + ctx.deposit_near + " NEAR"),
     message && message !== "done" ? el("div", { class: "muted", style: "margin-top:10px" }, message) : null);
   return [el("div", { class: "card" }, el("h1", {}, "Fund your ", el("em", {}, "bounty treasury")),
             el("div", { class: "muted" }, "Mend's agents are paid from this treasury on NEAR, only when you approve a fix.")),

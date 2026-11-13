@@ -226,10 +226,11 @@ class HostedService:
                 "Checkout did not crash on your fork, so there is nothing to fix. If you merged an earlier "
                 "Mend fix, delete your fork of mend-demo-shop on GitHub and send /try again."
             )
-        incident = self.orchestrator.report(json.loads(line[len(PAYLOAD_MARKER):]), project_hint=project)
-        notify(f"💥 Checkout crashed: <code>{incident['error_type']}: {incident['error_message']}</code>\n\n"
-               f"4/4 Incident <code>{incident['incident_id']}</code> opened. The agents are working; "
-               "your fix card will appear here in about 30 seconds.")
+        payload = json.loads(line[len(PAYLOAD_MARKER):])
+        # Sent before reporting, so it appears above the incident card that the report creates.
+        notify(f"💥 Checkout crashed: <code>{payload['error_type']}: {payload['error_message']}</code>\n\n"
+               "4/4 Mend caught it. The agents are working; the card below updates as they go (about 30 seconds).")
+        self.orchestrator.report(payload, project_hint=project)
 
     # -- Funding the bounty treasury ---------------------------------------
 
@@ -247,11 +248,19 @@ class HostedService:
             return
         existing = escrow.get_repo(project.repo)
         if existing:  # funded earlier: keep whoever owns it
+            if project.repo not in escrow.repos:
+                escrow.repos.append(project.repo)
             if existing["owner"] != escrow.account_id("owner"):
                 project.near_owner = existing["owner"]
                 self._save(project)
-            if project.repo not in escrow.repos:
-                escrow.repos.append(project.repo)
+                if int(existing["balance"]) < near_to_yocto(self.settings.bounty_near):
+                    link = self.wallet_link({"k": "fund", "u": telegram_id, "r": project.repo, "then": then})
+                    self.send(chat_id, (f"💰 The treasury for <b>{project.repo}</b> (owned by <code>{existing['owner']}</code>) "
+                                        f"has {yocto_to_near(existing['balance'])} NEAR, less than one "
+                                        f"{self.settings.bounty_near} NEAR bounty. Top it up from your wallet to continue."),
+                              [[{"text": "🔐 Top up from my wallet", "url": link}]])
+                    return
+            # A Mend-funded treasury that ran low is topped up when the incident opens.
             self._continue(telegram_id, project, then)
             return
         choice = secrets.token_urlsafe(6)
@@ -307,7 +316,9 @@ class HostedService:
             raise ServiceError(f"The treasury for {repo} is owned by {on_chain['owner']}, not {account_id}.")
         if on_chain.get("operator") != escrow.account_id("operator") or not on_chain.get("guard_agent"):
             raise ServiceError("The treasury exists but does not allow Mend's agents. Re-open the wallet link.")
-        first_time = project.near_owner != account_id
+        if int(on_chain["balance"]) < near_to_yocto(self.settings.bounty_near):
+            raise ServiceError("The treasury has less than one bounty. Top it up from your wallet.")
+        first_time = project.near_owner != account_id or bool(then)
         project.near_owner = account_id
         self._save(project)
         self.accounts.set_near_account(telegram_id, account_id)

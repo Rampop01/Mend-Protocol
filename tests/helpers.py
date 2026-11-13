@@ -134,6 +134,16 @@ class RecordingEscrow:
     def get_repo(self, repo_id):
         return self.treasuries.get(repo_id)
 
+    def has_funds_for(self, repo_id, bounty_near):
+        repo = self.treasuries.get(repo_id)
+        return repo is None or int(repo["balance"]) > 0  # unregistered repos are funded in older tests
+
+    def top_up(self, repo_id, amount_near):
+        self.calls.append(("deposit", repo_id, amount_near))
+        self.treasuries.setdefault(repo_id, {"owner": "owner.test", "operator": "operator.test", "guard_agent": "guard.test",
+                                              "reserved": "0", "total_paid": "0"})["balance"] = str(2 * 10**23)
+        return self._tx("owner.test", "deposit")
+
     def register(self, repo_id, owner="owner.test"):
         self.treasuries[repo_id] = {"owner": owner, "operator": "operator.test", "guard_agent": "guard.test",
                                     "balance": str(2 * 10**23), "reserved": "0", "total_paid": "0"}

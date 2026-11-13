@@ -275,6 +275,8 @@ class MendHandler(BaseHTTPRequestHandler):
         if body["k"] == "fund":
             existing = escrow.get_repo(body["r"])
             return dict(base, repo=body["r"], already_owner=(existing or {}).get("owner"),
+                        treasury_balance=(existing or {}).get("balance", "0"),
+                        bounty=str(near_to_yocto(settings.bounty_near)),
                         deposit=str(near_to_yocto(WALLET_DEPOSIT_NEAR)), deposit_near=WALLET_DEPOSIT_NEAR,
                         max_bounty=str(near_to_yocto(settings.max_bounty_near)), bounty_near=settings.bounty_near,
                         operator=escrow.account_id("operator"), recon=escrow.account_id("recon"),

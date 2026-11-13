@@ -137,6 +137,15 @@ class EscrowClient:
             final=True,
         )
 
+    def top_up(self, repo_id: str, amount_near: str) -> TxResult:
+        """The owner account adds funds to a repository treasury (anyone may call `deposit`)."""
+        return self._accounts["owner"].call(self.contract_id, "deposit", {"repo_id": repo_id},
+                                            deposit=near_to_yocto(amount_near), wait_until="FINAL")
+
+    def has_funds_for(self, repo_id: str, bounty_near: str) -> bool:
+        repo = self.get_repo(repo_id) or {}
+        return int(repo.get("balance", 0)) >= near_to_yocto(bounty_near)
+
     def reject(self, incident_id: str) -> TxResult:
         return self._call("operator", "reject", {"incident_id": incident_id})
 

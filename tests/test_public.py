@@ -181,3 +181,12 @@ class PublicServiceTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OwnerTriesOwnDemo(PublicServiceTests):
+    def test_the_demo_owner_uses_the_original_repo(self):
+        import mend.hosted
+        self.accounts.set_github("111", mend.hosted.DEMO_UPSTREAM.split("/")[0], "Rampop01:token")
+        self.say(111, "/try")
+        self.assertTrue(self.wait_for(lambda: any("opened" in t for t in self.texts(111))), self.texts(111))
+        self.assertEqual(self.orch.store.list(1)[0]["repo"], mend.hosted.DEMO_UPSTREAM)

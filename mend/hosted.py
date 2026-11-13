@@ -137,11 +137,17 @@ class HostedService:
             raise ServiceError(f"You've used /try {self.settings.limit_tries_per_day} times today. Try again tomorrow.")
 
         def work() -> None:
-            notify(f"1/4 Forking <b>{DEMO_UPSTREAM}</b> into your GitHub…")
-            fork = github.fork(DEMO_UPSTREAM)
-            if not fork.get("ok"):
-                raise ServiceError(f"Could not fork the demo shop: {fork.get('error')}")
-            repo = fork["full_name"]
+            account = self.accounts.get(telegram_id)
+            if account and account.github_login.lower() == DEMO_UPSTREAM.split("/")[0].lower():
+                # GitHub cannot fork a repository into its owner's account; the owner uses the original.
+                repo = DEMO_UPSTREAM
+                notify(f"1/4 You own <b>{DEMO_UPSTREAM}</b>, so Mend will use it directly…")
+            else:
+                notify(f"1/4 Forking <b>{DEMO_UPSTREAM}</b> into your GitHub…")
+                fork = github.fork(DEMO_UPSTREAM)
+                if not fork.get("ok"):
+                    raise ServiceError(f"Could not fork the demo shop: {fork.get('error')}")
+                repo = fork["full_name"]
             for _ in range(20):  # a new fork takes a few seconds to appear
                 if github.get_repo(repo).get("ok"):
                     break

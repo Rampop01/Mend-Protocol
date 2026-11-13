@@ -174,7 +174,7 @@ class TelegramBot:
             if incident.get("near_owner") and chain["enabled"] and self.hosted is not None:
                 # The treasury is the user's: the payout must be signed by their wallet, not by Mend.
                 link = self.hosted.wallet_link({"k": "approve", "u": incident.get("owner_telegram_id", ""),
-                                                "i": incident["incident_id"]}, ttl=86400)
+                                                "i": incident["incident_id"]}, ttl=7 * 86400)
                 approve = {"text": f"✅ Approve with NEAR wallet ({incident['bounty_near']} NEAR)", "url": link}
                 escrow += f"\n🔐 Your wallet <code>{esc(incident['near_owner'])}</code> signs the payout."
             keyboard = [[approve], [{"text": "❌ Reject", "callback_data": f"reject:{incident['incident_id']}"}]]
@@ -408,7 +408,7 @@ class TelegramBot:
                                          "reply_markup": {"inline_keyboard": [
                                              [{"text": "1. Connect GitHub", "callback_data": "cmd:connect"}],
                                              [{"text": "2. Connect NEAR wallet (optional)",
-                                               "url": hosted.wallet_link({"k": "link", "u": user_id}, ttl=86400)}],
+                                               "url": hosted.wallet_link({"k": "link", "u": user_id}, ttl=7 * 86400)}],
                                              [{"text": "3. Try the demo", "callback_data": "cmd:try"}]]}})
             elif command == "/connect":
                 account = hosted.accounts.get(user_id)
@@ -437,7 +437,7 @@ class TelegramBot:
                         balance = "unavailable right now"
                     text = f"Linked wallet: <code>{esc(linked)}</code>\nBalance: <b>{balance} NEAR</b>\n\nOpen the page to switch wallets."
                 buttons = [[{"text": "🔐 Connect NEAR wallet" if not linked else "🔐 Switch wallet",
-                             "url": hosted.wallet_link({"k": "link", "u": user_id}, ttl=86400)}]]
+                             "url": hosted.wallet_link({"k": "link", "u": user_id}, ttl=7 * 86400)}]]
                 if linked and isinstance(balance, str) and balance[:1].isdigit() and float(balance) < 0.3:
                     buttons.append([{"text": "💧 Get 0.3 testnet NEAR from Mend", "callback_data": "cmd:faucet"}])
                 self.send(chat_id, text, keyboard=buttons)

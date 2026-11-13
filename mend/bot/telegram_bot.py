@@ -47,6 +47,8 @@ class TelegramBot:
         self.running = False
         self._offset = 0
         self._thread: Optional[threading.Thread] = None
+        self._in_flight: set = set()
+        self._in_flight_lock = threading.Lock()
         orchestrator.listeners.append(self.on_incident)
 
     # ------------------------------------------------------------------
@@ -220,10 +222,27 @@ class TelegramBot:
             logger.warning("Refused %s of %s by Telegram user %s", action, incident_id, user.get("id"))
             return
         who = f"@{user['username']}" if user.get("username") else f"telegram:{user.get('id')}"
+
+        # A second tap, or a tap on an old card, is answered quietly instead of posting an error.
+        incident = self.orchestrator.store.get(incident_id)
+        with self._in_flight_lock:
+            busy = incident_id in self._in_flight
+            if not busy and incident is not None and incident["status"] == "AWAITING_APPROVAL":
+                self._in_flight.add(incident_id)
+                busy = None  # this tap proceeds
+        if busy is not None:
+            state = "already being handled" if busy else f"already {incident['status'].lower().replace('_', ' ')}" if incident else "unknown"
+            self.api("answerCallbackQuery", {"callback_query_id": query.get("id"), "text": f"This incident is {state}."})
+            return
+
         self.api("answerCallbackQuery", {
             "callback_query_id": query.get("id"),
             "text": "Approving: settling on NEAR…" if action == "approve" else "Rejecting…",
         })
+        # Remove the buttons at once so nobody can tap twice.
+        if message.get("message_id"):
+            self.api("editMessageReplyMarkup", {"chat_id": chat_id, "message_id": message["message_id"],
+                                                "reply_markup": {"inline_keyboard": []}})
 
         def run() -> None:
             try:
@@ -233,9 +252,16 @@ class TelegramBot:
                     self.orchestrator.reject(incident_id, rejector=who)
             except IncidentError as exc:
                 self.send(self.chat_id, f"⚠️ {esc(exc)}")
+                current = self.orchestrator.store.get(incident_id)
+                if current is not None:
+                    self.on_incident(current, "retry")  # puts the buttons back if it can be retried
+                    self.orchestrator.store.save(current)
             except Exception:
                 logger.exception("Telegram %s failed", action)
                 self.send(self.chat_id, f"⚠️ {action.title()} of <code>{esc(incident_id)}</code> failed. See the server log.")
+            finally:
+                with self._in_flight_lock:
+                    self._in_flight.discard(incident_id)
 
         threading.Thread(target=run, daemon=True).start()
 
@@ -246,13 +272,14 @@ class TelegramBot:
 
         if command in ("/start", "/whoami"):
             # Answered in any chat: this is how you find the ids to put in .env.
-            self.send(chat_id, (
+            # remove_keyboard clears reply keyboards left behind by older bot versions.
+            self.api("sendMessage", {"chat_id": chat_id, "parse_mode": "HTML", "reply_markup": {"remove_keyboard": True}, "text": (
                 "<b>Mend Protocol</b>\n"
                 f"This chat id: <code>{chat_id}</code>\nYour user id: <code>{user_id}</code>\n\n"
                 "Set <code>TELEGRAM_CHAT_ID</code> to the chat that should receive incidents and "
                 "<code>TELEGRAM_APPROVER_IDS</code> to the users allowed to approve.\n\n"
                 "/status  treasury, agents and network\n/incidents  recent incidents"
-            ))
+            )})
             return
         if str(chat_id) != self.chat_id:
             return
@@ -297,6 +324,11 @@ class TelegramBot:
         if not me.get("ok"):
             raise RuntimeError(f"Telegram rejected the bot token: {me.get('description')}")
         logger.info("Telegram bot @%s connected", me["result"].get("username"))
+        self.api("setMyCommands", {"commands": [
+            {"command": "status", "description": "Treasury, agents and network"},
+            {"command": "incidents", "description": "Recent incidents"},
+            {"command": "whoami", "description": "Show this chat's id and your user id"},
+        ]})
         self.running = True
 
         def loop() -> None:

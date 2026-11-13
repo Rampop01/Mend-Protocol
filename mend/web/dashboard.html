@@ -61,7 +61,7 @@
 <script>
 "use strict";
 let token = sessionStorage.getItem("mend_token") || "";
-let selected = null, busy = false;
+let selected = null, pinned = false, busy = false;  // pinned: the user clicked an incident
 
 function h(tag, attrs, ...kids) {
   const el = document.createElement(tag);
@@ -129,7 +129,7 @@ function renderStatus(s) {
 
 function renderList(items) {
   if (!items.length) { set("list", h("div", {class: "muted"}, "No incidents yet.")); return; }
-  set("list", items.map(i => h("div", {class: "item" + (i.incident_id === selected ? " sel" : ""), onclick: () => { selected = i.incident_id; refresh(); }},
+  set("list", items.map(i => h("div", {class: "item" + (i.incident_id === selected ? " sel" : ""), onclick: () => { selected = i.incident_id; pinned = true; refresh(); }},
     h("div", {class: "row"}, h("span", {class: "t"}, i.error_type), h("span", {class: "badge " + i.status}, i.status.replace("_", " "))),
     h("div", {class: "m mono"}, i.rel_path + ":" + i.line_number),
     h("div", {class: "m"}, i.incident_id + " · " + new Date(i.created_at * 1000).toLocaleString()))));
@@ -211,7 +211,8 @@ async function refresh() {
   try {
     const [status, list] = await Promise.all([api("/api/v1/status"), api("/api/v1/incidents")]);
     renderStatus(status);
-    if (!selected && list.incidents.length) selected = list.incidents[0].incident_id;
+    // Follow the newest incident until the user picks one.
+    if (!pinned && list.incidents.length) selected = list.incidents[0].incident_id;
     renderList(list.incidents);
     await refreshDetail();
   } catch (e) { document.getElementById("sub").textContent = "Cannot reach the Mend server: " + e.message; }

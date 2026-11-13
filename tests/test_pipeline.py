@@ -276,3 +276,37 @@ class ServerTests(PipelineCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TelegramTapTests(PipelineCase):
+    def test_second_tap_is_answered_quietly_and_buttons_are_removed(self):
+        from mend.bot.telegram_bot import TelegramBot
+        orch = self.orchestrator()
+        incident = self.run_incident(orch)
+        bot = TelegramBot("t", "42", [], orch)
+        calls = []
+        bot.api = lambda method, data=None, timeout=20.0: calls.append((method, data)) or {"ok": True, "result": {"message_id": 1}}
+        tap = {"id": "q", "data": f"approve:{incident['incident_id']}", "from": {"id": 7, "username": "dev"},
+               "message": {"chat": {"id": 42}, "message_id": 9}}
+        bot.handle_callback(tap)
+        self.assertIn("editMessageReplyMarkup", [m for m, _ in calls])
+        for _ in range(100):
+            if orch.store.get(incident["incident_id"])["status"] == "RESOLVED":
+                break
+            import time; time.sleep(0.05)
+        calls.clear()
+        bot.handle_callback(tap)
+        self.assertEqual([m for m, _ in calls], ["answerCallbackQuery"])
+        self.assertIn("already resolved", calls[0][1]["text"])
+
+    def test_taps_from_other_chats_are_refused(self):
+        from mend.bot.telegram_bot import TelegramBot
+        orch = self.orchestrator()
+        incident = self.run_incident(orch)
+        bot = TelegramBot("t", "42", ["7"], orch)
+        calls = []
+        bot.api = lambda method, data=None, timeout=20.0: calls.append((method, data)) or {"ok": True}
+        bot.handle_callback({"id": "q", "data": f"approve:{incident['incident_id']}", "from": {"id": 8},
+                             "message": {"chat": {"id": 42}, "message_id": 9}})
+        self.assertTrue(calls[0][1]["show_alert"])
+        self.assertEqual(orch.store.get(incident["incident_id"])["status"], "AWAITING_APPROVAL")

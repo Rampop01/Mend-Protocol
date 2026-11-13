@@ -29,15 +29,15 @@ If no patch passes, or the human rejects, the bounty returns to the treasury.
 
 Live deployment on testnet: [`escrow.mend-cb4c33d5.testnet`](https://testnet.nearblocks.io/address/escrow.mend-cb4c33d5.testnet). Accounts and setup transactions are in [deployments/testnet.json](deployments/testnet.json).
 
-A complete incident from that deployment, `INC-AB17448DA3`:
+A complete incident on a real GitHub repository, [Rampop01/mend-demo-shop](https://github.com/Rampop01/mend-demo-shop): a coupon code `SAVEBIG` crashed checkout with `ValueError`. The rule-based agent had no rule for it, the LLM agent's fix passed 6/6 tests with a guard score of 100, it was approved from Telegram, and it arrived as [pull request #1](https://github.com/Rampop01/mend-demo-shop/pull/1).
 
 | Step | Signed by | Transaction |
 | --- | --- | --- |
-| Open incident, reserve 0.25 NEAR | operator | [C6RDsi…](https://testnet.nearblocks.io/txns/C6RDsiRpBQo5yWdgTg27R7LKouriAh45gRBdJKQ8VGKG) |
-| Commit recon report hash | recon | [DDKBB2…](https://testnet.nearblocks.io/txns/DDKBB2JzWL6CTG4SrVksaryVyZWkHEheHnZ5oK4BrtsV) |
-| Commit patch hash and test results | forge-rules | [2LKrNQ…](https://testnet.nearblocks.io/txns/2LKrNQPsc65vdTr1ubBq6PBX5TnTCMsg2t7QXZ25XPmz) |
-| Attest the patch, score 100 | guard | [2UCF77…](https://testnet.nearblocks.io/txns/2UCF77HyNRMz8i33QrLTqjRay6x7TwkV2JgMX5h7cWVj) |
-| Approve and pay 0.175 / 0.0375 / 0.0375 NEAR | owner | [43RSkH…](https://testnet.nearblocks.io/txns/43RSkHs7tYdmpi6UqVJnwNe2anhf9DVj2ZvChYCK7Wkk) |
+| Open incident, reserve 0.25 NEAR | operator | [7UpBzD…](https://testnet.nearblocks.io/txns/7UpBzD2SJa7MS2ED58gBeYkUY6ULNYSFskJfcbvR9vwo) |
+| Commit recon report hash | recon | [FodXJA…](https://testnet.nearblocks.io/txns/FodXJAK5Wg72AkzJhKntajZEG6oh6oKGW1KmZsWs1m1n) |
+| Commit patch hash and test results | forge-llm | [6fdta7…](https://testnet.nearblocks.io/txns/6fdta7PtQgzBGK9hYGhCeaGfZyXPZyWe6Ks9ny3Y3MLE) |
+| Attest the patch, score 100 | guard | [E3S1NT…](https://testnet.nearblocks.io/txns/E3S1NT3ygwvG6cx7P2CdePVN9FT2TQTUAm9uvD5bPs2S) |
+| Approve from Telegram; pay 0.175 / 0.0375 / 0.0375 NEAR | owner | [8E7v3F…](https://testnet.nearblocks.io/txns/8E7v3FoMU6jq4P88JkZZ2Rcv4BTub7FDqcM3HRbi3Pst) |
 
 ## Try it
 
@@ -55,7 +55,7 @@ pip install -r requirements.txt
 python -m unittest discover -s tests -t .
 ```
 
-Expect `Ran 58 tests` and `OK`. These run the whole pipeline against a temporary project, including a hostile LLM patch that must be blocked before it executes.
+Expect `Ran 60 tests` and `OK`. These run the whole pipeline against a temporary project, including a hostile LLM patch that must be blocked before it executes.
 
 ### 2. Create your own testnet deployment
 
@@ -165,7 +165,7 @@ mend/server.py             HTTP API and dashboard
 mend/cli.py                setup, connect, serve, status, approve, reject
 mend/connect.py            GitHub repository workspaces
 examples/payment_service/  example service with a real bug and a test suite
-tests/                     58 Python tests
+tests/                     60 Python tests
 ```
 
 Rebuild the contract with `contracts/build.sh` (needs `rustup`; uses `wasm-opt` if installed) and test it with `cargo test` in `contracts/bounty_escrow`.

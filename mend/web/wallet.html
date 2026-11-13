@@ -27,6 +27,9 @@
   .add { color:var(--g); } .del { color:var(--bad); }
   .steps { font-size:14px; color:var(--muted); padding-left:18px; margin:8px 0 0; }
   .hidden { display:none; }
+  .notice { border-color:#3a5a2f; background:#0f1a12; font-size:14px; }
+  input { width:100%; padding:13px 14px; border-radius:12px; border:1px solid var(--line); background:#0a0d10; color:var(--text);
+          font:15px ui-monospace, Menlo, monospace; margin-top:10px; }
 </style>
 </head>
 <body>
@@ -68,6 +71,9 @@ async function refreshAccount() {
   const accounts = selector ? selector.store.getState().accounts : [];
   if (!accounts.length) { account = null; return render(); }
   const id = accounts[0].accountId;
+  if (ctx.network === "testnet" && !id.endsWith(".testnet") && id.length !== 64) {
+    message = "⚠️ " + id + " is a mainnet account. This page needs a testnet account (ending in .testnet).";
+  }
   try {
     const info = await api("/api/v1/wallet/account?id=" + encodeURIComponent(id));
     account = { id, balance: info.balance, exists: info.exists };
@@ -75,14 +81,23 @@ async function refreshAccount() {
   render();
 }
 
+function networkNotice() {
+  if (ctx.network !== "testnet") return null;
+  return el("div", { class: "card notice" },
+    el("b", {}, "This is NEAR testnet. "), "Use an account whose name ends in ", el("b", { class: "mono" }, ".testnet"),
+    ". A mainnet account (ending in .near) won't work here.",
+    el("div", { style: "margin-top:8px" }, "No testnet account? ",
+      link("https://testnet.mynearwallet.com/create", "Create one free with MyNearWallet"),
+      " (or switch Meteor to testnet), then get free testnet NEAR from the ", link(ctx.faucet, "NEAR faucet"), "."));
+}
+
 function walletCard() {
   if (!account) {
     return el("div", { class: "card" },
       el("div", { class: "muted" }, "Connect a NEAR " + ctx.network + " wallet: Meteor, MyNearWallet or Intear."),
-      el("button", { class: "primary", onclick: () => modal.show() }, "Connect NEAR wallet"),
-      el("div", { class: "muted", style: "margin-top:12px" }, "No wallet yet? ",
-        link("https://wallet.meteorwallet.app", "Create one with Meteor"), " (choose testnet), then get free testnet NEAR from the ",
-        link(ctx.faucet, "NEAR faucet"), "."));
+      el("button", { class: "primary", onclick: () => { message = ""; modal.show(); } }, "Connect NEAR wallet"),
+      el("div", { class: "muted", style: "margin-top:12px" },
+        "A sign-in window opens. If nothing happens, allow pop-ups for this page and try again."));
   }
   const balance = account.balance == null ? "unavailable" : near(account.balance) + " NEAR";
   return el("div", { class: "card" },
@@ -174,7 +189,7 @@ function fundView() {
     message && message !== "done" ? el("div", { class: "muted", style: "margin-top:10px" }, message) : null);
   return [el("div", { class: "card" }, el("h1", {}, "Fund your ", el("em", {}, "bounty treasury")),
             el("div", { class: "muted" }, "Mend's agents are paid from this treasury on NEAR, only when you approve a fix.")),
-          walletCard(), action];
+          networkNotice(), walletCard(), action];
 }
 
 function approveView() {
@@ -190,6 +205,7 @@ function approveView() {
       el("div", { class: "row" }, el("span", {}, "Guard score"), el("b", {}, (ctx.score ?? "?") + " / 100")),
       el("div", { class: "row" }, el("span", {}, "Bounty"), el("b", {}, ctx.bounty_near + " NEAR · 70% fixer · 15% guard · 15% recon")),
       el("div", { class: "muted", style: "margin-top:8px" }, ctx.rationale), diff),
+    networkNotice(),
     walletCard(),
     el("div", { class: "card" },
       done ? el("div", { class: "ok", style: "font-weight:600" }, "✅ Approved and paid on NEAR.",
@@ -216,7 +232,19 @@ function linkView() {
     el("div", { class: "card" }, el("h1", {}, "Connect your ", el("em", {}, "NEAR wallet")),
       el("div", { class: "muted" }, "Your wallet will own your repositories' bounty treasuries and sign every payout to Mend's agents. "
         + "Linking only shows Mend which account is yours; ownership is proven when your wallet signs.")),
+    networkNotice(),
     walletCard(),
+    !account ? el("div", { class: "card" },
+      el("div", { class: "muted" }, "Or type your testnet account name to link it. Mend shows its public balance; you'll still sign with the wallet to fund a treasury."),
+      el("input", { id: "manual", placeholder: "yourname.testnet", autocapitalize: "off", spellcheck: "false" }),
+      el("button", { onclick: async () => {
+        const id = (document.getElementById("manual").value || "").trim().toLowerCase();
+        if (!/^[a-z0-9._-]+$/.test(id)) { message = "⚠️ That doesn't look like a NEAR account name."; return render(); }
+        if (ctx.network === "testnet" && !id.endsWith(".testnet") && id.length !== 64) {
+          message = "⚠️ " + id + " is not a testnet account. Testnet names end in .testnet."; return render(); }
+        account = { id, balance: null }; await linkWallet();
+      } }, "Link this account"),
+      message && message !== "done" ? el("div", { class: "muted", style: "margin-top:10px" }, message) : null) : null,
     el("div", { class: "card" },
       message === "done" || (account && ctx.linked === account.id)
         ? el("div", { class: "ok", style: "font-weight:600" }, "✅ " + (ctx.linked || account.id) + " is linked. Go back to Telegram and send /try.")
@@ -237,6 +265,10 @@ function render() {
   try {
     ctx = await api("/api/v1/wallet/context?t=" + encodeURIComponent(TOKEN));
     ({ selector, modal } = await MendWallet.connect(ctx.network, ctx.contract_id));
+    window.addEventListener("unhandledrejection", (e) => {
+      const why = (e.reason && (e.reason.message || e.reason)) || "unknown error";
+      message = "⚠️ The wallet reported: " + String(why).slice(0, 200); busy = false; render();
+    });
     selector.store.observable.subscribe(() => refreshAccount());
     await refreshAccount();
     // Redirect wallets (MyNearWallet) come back with the transaction hash in the URL.

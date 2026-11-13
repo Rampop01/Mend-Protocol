@@ -12,6 +12,7 @@ Mend runs as a public service. Open **[@mend_protocol_bot](https://t.me/mend_pro
 
 1. Send `/start`. Expect a welcome message with two buttons.
 2. Tap **Connect GitHub**. Expect a short code and a link to github.com/login/device. Enter the code there and approve *Mend Protocol*, which asks for access to **public** repositories only. Expect "Connected to GitHub as <you>".
+   Optionally tap **Connect NEAR wallet** (or send `/wallet`): connect Meteor, MyNearWallet or Intear on testnet and the bot shows your account and balance.
 3. Tap **Try the demo**. Mend forks [Rampop01/mend-demo-shop](https://github.com/Rampop01/mend-demo-shop) into your GitHub and asks who funds the repository's bounty treasury:
    - **Use my NEAR wallet**: a page opens where you connect Meteor, MyNearWallet or Intear (testnet), see your balance, and sign one transaction that opens the treasury with **you as its owner** (0.2 testnet NEAR; free testnet NEAR from the [faucet](https://docs.near.org/getting-started/faucet)).
    - **Let Mend fund it**: no wallet needed; Mend deposits testnet NEAR for you.

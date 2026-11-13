@@ -270,6 +270,8 @@ class MendHandler(BaseHTTPRequestHandler):
         settings = self.server.settings
         base = {"kind": body["k"], "network": escrow.network, "contract_id": escrow.contract_id,
                 "faucet": FAUCET_URL, "explorer": escrow.rpc.explorer}
+        if body["k"] == "link":
+            return dict(base, linked=self.server.hosted.accounts.near_account(body["u"]))
         if body["k"] == "fund":
             existing = escrow.get_repo(body["r"])
             return dict(base, repo=body["r"], already_owner=(existing or {}).get("owner"),
@@ -304,7 +306,9 @@ class MendHandler(BaseHTTPRequestHandler):
             return
         from mend.hosted import ServiceError
         try:
-            if path == "/api/v1/wallet/funded" and body["k"] == "fund":
+            if path == "/api/v1/wallet/linked" and body["k"] == "link":
+                self._json(200, hosted.wallet_linked(body["u"], account_id))
+            elif path == "/api/v1/wallet/funded" and body["k"] == "fund":
                 self._json(200, hosted.wallet_funded(body["u"], body["r"], body.get("then", ""), account_id))
             elif path == "/api/v1/wallet/approved" and body["k"] == "approve":
                 tx_hash = self._verified_tx(str(data.get("tx_hash", "")), account_id)
@@ -332,7 +336,7 @@ class MendHandler(BaseHTTPRequestHandler):
             self._json(403, {"error": "Cross-origin request refused"})
             return
         path = self.path.split("?", 1)[0]
-        if path in ("/api/v1/wallet/funded", "/api/v1/wallet/approved"):
+        if path in ("/api/v1/wallet/linked", "/api/v1/wallet/funded", "/api/v1/wallet/approved"):
             data = self._read_json()
             if data is not None:
                 self._wallet_post(path, data)

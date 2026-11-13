@@ -343,11 +343,12 @@ class TelegramBot:
         "📱 <b>You</b> approve here with one tap; the fix arrives as a GitHub pull request\n\n"
         "<b>Try it in two minutes:</b>\n"
         "1. /connect: sign in to GitHub (public repos only)\n"
-        "2. /try: Mend forks a demo shop into your GitHub, crashes its checkout, and fixes it\n\n"
+        "2. /wallet: connect your NEAR wallet (optional) to own your bounty treasury and sign payouts\n"
+        "3. /try: Mend forks a demo shop into your GitHub, crashes its checkout, and fixes it\n\n"
+        "No NEAR wallet? Skip step 2 and Mend funds your treasury with testnet NEAR.\n"
         "Then /watch owner/repo to protect your own Python project.\n"
-        "/repos · /status · /disconnect · /help\n\n"
-        "<i>Bounties are paid in NEAR testnet tokens from Mend's treasury. Open source: "
-        "github.com/Rampop01/Mend-Protocol</i>"
+        "/status · /disconnect · /help\n\n"
+        "<i>Bounties use NEAR testnet tokens. Open source: github.com/Rampop01/Mend-Protocol</i>"
     )
 
     # Buttons from an older version of the bot that some chats still show.
@@ -379,7 +380,9 @@ class TelegramBot:
                                          "disable_web_page_preview": True,
                                          "reply_markup": {"inline_keyboard": [
                                              [{"text": "1. Connect GitHub", "callback_data": "cmd:connect"}],
-                                             [{"text": "2. Try the demo", "callback_data": "cmd:try"}]]}})
+                                             [{"text": "2. Connect NEAR wallet (optional)",
+                                               "url": hosted.wallet_link({"k": "link", "u": user_id}, ttl=86400)}],
+                                             [{"text": "3. Try the demo", "callback_data": "cmd:try"}]]}})
             elif command == "/connect":
                 account = hosted.accounts.get(user_id)
                 if account and account.github_login and arg.strip() != "again":
@@ -394,6 +397,20 @@ class TelegramBot:
                     ), keyboard=[[{"text": "Open GitHub", "url": url}]])
 
                 hosted.connect_github(user_id, notify, show_code)
+            elif command == "/wallet":
+                linked = hosted.accounts.near_account(user_id)
+                escrow = self.orchestrator.escrow
+                text = "Connect a NEAR testnet wallet (Meteor, MyNearWallet or Intear). It will own your bounty " \
+                       "treasuries and sign each payout."
+                if linked and escrow is not None:
+                    try:
+                        account = escrow.rpc.view_account(linked)
+                        balance = yocto_to_near(account["amount"]) if account else "account not found"
+                    except Exception:
+                        balance = "unavailable right now"
+                    text = f"Linked wallet: <code>{esc(linked)}</code>\nBalance: <b>{balance} NEAR</b>\n\nOpen the page to switch wallets."
+                self.send(chat_id, text, keyboard=[[{"text": "🔐 Connect NEAR wallet" if not linked else "🔐 Switch wallet",
+                                                     "url": hosted.wallet_link({"k": "link", "u": user_id}, ttl=86400)}]])
             elif command == "/disconnect":
                 hosted.accounts.clear_github(user_id)
                 notify("GitHub disconnected; Mend deleted your token. "
@@ -462,6 +479,7 @@ class TelegramBot:
             commands = [
                 {"command": "start", "description": "What Mend does"},
                 {"command": "connect", "description": "Sign in to GitHub"},
+                {"command": "wallet", "description": "Connect your NEAR wallet and see its balance"},
                 {"command": "try", "description": "Watch Mend fix a real bug on your fork"},
                 {"command": "watch", "description": "Protect one of your repositories"},
                 {"command": "repos", "description": "Your repositories and NEAR treasuries"},

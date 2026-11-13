@@ -257,8 +257,11 @@ class HostedService:
         choice = secrets.token_urlsafe(6)
         self._fund_choices[choice] = {"telegram_id": telegram_id, "repo": project.repo, "then": then}
         link = self.wallet_link({"k": "fund", "u": telegram_id, "r": project.repo, "then": then})
+        linked = self.accounts.near_account(telegram_id)
         self.send(chat_id, (
             f"💰 <b>Fund the bounty treasury for {project.repo}</b>\n\n"
+            + (f"Your linked wallet: <code>{linked}</code>\n\n" if linked else "")
+            + 
             "Every fix is paid from this repository's treasury on NEAR, and only when you approve.\n\n"
             f"🔐 <b>Use my NEAR wallet</b>: deposit {WALLET_DEPOSIT_NEAR} testnet NEAR from your wallet. You own the "
             "treasury, and you'll approve each payout by signing with your wallet. "
@@ -321,6 +324,24 @@ class HostedService:
             notify = lambda text: self.send(chat_id, text)
             self.run_async(telegram_id, "continue", lambda: self._continue(telegram_id, project, then), notify)
         return {"repo": repo, "owner": account_id, "balance": on_chain["balance"]}
+
+    def wallet_linked(self, telegram_id: str, account_id: str) -> Dict[str, Any]:
+        """Links a NEAR account for display (its balance is public). Ownership is proven later, by signing."""
+        escrow = self.orchestrator.escrow
+        account = escrow.rpc.view_account(account_id) if escrow is not None else None
+        if escrow is not None and account is None:
+            raise ServiceError(f"{account_id} does not exist on NEAR {escrow.network}.")
+        self.accounts.set_near_account(telegram_id, account_id)
+        user = self.accounts.get(telegram_id)
+        balance = yocto_to_near(account["amount"]) if account else "?"
+        low = account is not None and int(account["amount"]) < near_to_yocto("0.3")
+        self.send(user.chat_id if user else telegram_id, (
+            f"✅ NEAR wallet linked: <code>{account_id}</code>\nBalance: <b>{balance} NEAR</b> ({escrow.network if escrow else 'testnet'})\n\n"
+            + (f"That's not enough to fund a treasury (0.2 NEAR + fees). Get free testnet NEAR: {FAUCET_URL}\n\n" if low else "")
+            + "When you fund a repository's treasury, this wallet signs it, and it signs each payout too. "
+              "Next: /try"
+        ))
+        return {"account_id": account_id, "balance": account["amount"] if account else "0"}
 
     def _continue(self, telegram_id: str, project: Project, then: str) -> None:
         user = self.accounts.get(telegram_id)

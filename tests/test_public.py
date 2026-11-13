@@ -291,3 +291,22 @@ class WalletOwnedTreasury(PublicServiceTests):
         self.assertEqual(done["status"], "RESOLVED")
         self.assertEqual(done["resolution"]["pr_url"], "https://github.com/alice/mend-demo-shop/pull/1")
         self.assertEqual(done["resolution"]["settlement"]["signer_id"], "alice.testnet")
+
+
+class WalletLinking(PublicServiceTests):
+    def test_welcome_offers_the_wallet_and_linking_shows_the_balance(self):
+        self.settings.public_url = "https://mend.example"
+        self.settings.secret_key = "k" * 32
+        self.say(111, "/start")
+        welcome = next(d for m, d in self.sent if "Try it in two minutes" in d.get("text", ""))
+        buttons = [row[0] for row in welcome["reply_markup"]["inline_keyboard"]]
+        self.assertEqual([b["text"][:2] for b in buttons], ["1.", "2.", "3."])
+        self.assertIn("/wallet?t=", buttons[1]["url"])
+
+        result = self.hosted.wallet_linked("111", "alice.testnet")
+        self.assertEqual(self.accounts.near_account("111"), "alice.testnet")
+        self.assertEqual(result["balance"], str(5 * 10**24))
+        self.assertTrue(any("NEAR wallet linked" in t and "5 NEAR" in t for t in self.texts(111)))
+
+        self.say(111, "/wallet")
+        self.assertIn("alice.testnet", self.texts(111)[-1])

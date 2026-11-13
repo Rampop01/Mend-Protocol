@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import secrets
 import sys
 import threading
 import time
@@ -21,7 +22,8 @@ from mend.accounts import AccountError, AccountStore, DeviceFlow
 from mend.config import Project, Settings
 from mend.connect import ConnectError, connect_repo, normalize_repo
 from mend.integrations.github import GitHubClient
-from mend.integrations.near import NearError, yocto_to_near
+from mend.integrations.near import NearError, near_to_yocto, yocto_to_near
+from mend.links import make_token
 from mend.sandbox import run_in_copy
 from mend.swarm.orchestrator import IncidentError, SwarmOrchestrator
 
@@ -42,6 +44,9 @@ except Exception as exc:
 
 Notify = Callable[[str], None]
 
+FAUCET_URL = "https://docs.near.org/getting-started/faucet"
+WALLET_DEPOSIT_NEAR = "0.2"
+
 
 class ServiceError(Exception):
     """Shown to the user as-is."""
@@ -54,6 +59,9 @@ class HostedService:
         self.accounts = accounts
         self._busy: Dict[str, str] = {}
         self.clone_url_for: Optional[Callable[[str], str]] = None  # tests point clones at a local remote
+        # Set by the Telegram bot: send(chat_id, text, keyboard)
+        self.send: Callable[..., Any] = lambda chat_id, text, keyboard=None: None
+        self._fund_choices: Dict[str, Dict[str, Any]] = {}
         self._lock = threading.Lock()
 
     # -- helpers -----------------------------------------------------------
@@ -88,6 +96,7 @@ class HostedService:
                                "Send /repos to see them.")
         try:
             result = connect_repo(self.settings, repo, github=github, owner_telegram_id=telegram_id,
+                                  register_on_chain=False,
                                   clone_url=self.clone_url_for(repo) if self.clone_url_for else None,
                                   log=lambda line: logger.info("[%s] %s", telegram_id, line))
         except ConnectError as exc:
@@ -202,25 +211,127 @@ class HostedService:
             if result is None:
                 raise ServiceError("GitHub is still preparing your fork. Send /try again in a minute.")
             project: Project = result["project"]
-            treasury = result["treasury"]
-            funds = (f"Treasury: {yocto_to_near(treasury['balance'])} NEAR on testnet."
-                     if treasury else "No NEAR treasury (NEAR is not configured on this server).")
-            notify(f"{result['tests_run'] - result['tests_failed']}/{result['tests_run']} tests pass on your fork. {funds}")
-
-            notify("3/4 A customer checks out with the coupon <code>SAVEBIG</code>…")
-            proc = run_in_copy(project, [sys.executable, "-c", DEMO_CRASH, project.repo], timeout=60)
-            line = next((l for l in proc.stdout.splitlines() if l.startswith(PAYLOAD_MARKER)), None)
-            if line is None:
-                raise ServiceError(
-                    "Checkout did not crash on your fork, so there is nothing to fix. If you merged an earlier "
-                    "Mend fix, delete your fork of mend-demo-shop on GitHub and send /try again."
-                )
-            incident = self.orchestrator.report(json.loads(line[len(PAYLOAD_MARKER):]), project_hint=project)
-            notify(f"💥 Checkout crashed: <code>{incident['error_type']}: {incident['error_message']}</code>\n\n"
-                   f"4/4 Incident <code>{incident['incident_id']}</code> opened. The agents are working; "
-                   "your fix card will appear here in about 30 seconds.")
+            notify(f"{result['tests_run'] - result['tests_failed']}/{result['tests_run']} tests pass on your fork.")
+            self.offer_funding(telegram_id, project, then="try")
 
         self.run_async(telegram_id, "/try", work, notify)
+
+    def crash_demo(self, telegram_id: str, project: Project, notify: Notify) -> None:
+        """Runs the demo shop's checkout with the bad coupon, in the sandbox, and reports the crash."""
+        notify("3/4 A customer checks out with the coupon <code>SAVEBIG</code>…")
+        proc = run_in_copy(project, [sys.executable, "-c", DEMO_CRASH, project.repo], timeout=60)
+        line = next((l for l in proc.stdout.splitlines() if l.startswith(PAYLOAD_MARKER)), None)
+        if line is None:
+            raise ServiceError(
+                "Checkout did not crash on your fork, so there is nothing to fix. If you merged an earlier "
+                "Mend fix, delete your fork of mend-demo-shop on GitHub and send /try again."
+            )
+        incident = self.orchestrator.report(json.loads(line[len(PAYLOAD_MARKER):]), project_hint=project)
+        notify(f"💥 Checkout crashed: <code>{incident['error_type']}: {incident['error_message']}</code>\n\n"
+               f"4/4 Incident <code>{incident['incident_id']}</code> opened. The agents are working; "
+               "your fix card will appear here in about 30 seconds.")
+
+    # -- Funding the bounty treasury ---------------------------------------
+
+    def wallet_link(self, payload: Dict[str, Any], ttl: int = 3600) -> str:
+        return f"{self.settings.public_url}/wallet?t={make_token(self.settings.secret_key, payload, ttl)}"
+
+    def offer_funding(self, telegram_id: str, project: Project, then: str) -> None:
+        """Lets the user fund their repository's treasury from their own wallet, or have Mend fund it."""
+        user = self.accounts.get(telegram_id)
+        chat_id = user.chat_id if user else telegram_id
+        escrow = self.orchestrator.escrow
+        if escrow is None:
+            self.send(chat_id, "NEAR is not configured on this server, so this repository has no bounty treasury.")
+            self._continue(telegram_id, project, then)
+            return
+        existing = escrow.get_repo(project.repo)
+        if existing:  # funded earlier: keep whoever owns it
+            if existing["owner"] != escrow.account_id("owner"):
+                project.near_owner = existing["owner"]
+                self._save(project)
+            if project.repo not in escrow.repos:
+                escrow.repos.append(project.repo)
+            self._continue(telegram_id, project, then)
+            return
+        choice = secrets.token_urlsafe(6)
+        self._fund_choices[choice] = {"telegram_id": telegram_id, "repo": project.repo, "then": then}
+        link = self.wallet_link({"k": "fund", "u": telegram_id, "r": project.repo, "then": then})
+        self.send(chat_id, (
+            f"💰 <b>Fund the bounty treasury for {project.repo}</b>\n\n"
+            "Every fix is paid from this repository's treasury on NEAR, and only when you approve.\n\n"
+            f"🔐 <b>Use my NEAR wallet</b>: deposit {WALLET_DEPOSIT_NEAR} testnet NEAR from your wallet. You own the "
+            "treasury, and you'll approve each payout by signing with your wallet. "
+            f"Free testnet NEAR: {FAUCET_URL}\n\n"
+            f"🎁 <b>Let Mend fund it</b>: Mend deposits {self.settings.treasury_deposit_near} testnet NEAR for you "
+            "and you approve with a tap here. No wallet needed."
+        ), [[{"text": "🔐 Use my NEAR wallet", "url": link}],
+            [{"text": "🎁 Let Mend fund it (testnet)", "callback_data": f"fund:{choice}"}]])
+
+    def fund_with_mend(self, choice: str, telegram_id: str, notify: Notify) -> None:
+        pending = self._fund_choices.get(choice)
+        if pending is None or pending["telegram_id"] != telegram_id:
+            raise ServiceError("This choice has expired. Send /try or /watch again.")
+        project = self.settings.project_by_repo(pending["repo"])
+        if project is None:
+            raise ServiceError("That repository is no longer connected.")
+
+        def work() -> None:
+            from mend.integrations.escrow import register_repo_treasury
+            notify(f"Opening a {self.settings.treasury_deposit_near} NEAR treasury for <b>{project.repo}</b>…")
+            treasury = register_repo_treasury(self.settings.near_keys_file, project.repo, log=lambda l: None,
+                                              deposit_near=self.settings.treasury_deposit_near,
+                                              max_bounty_near=self.settings.max_bounty_near)
+            self._fund_choices.pop(choice, None)
+            escrow = self.orchestrator.escrow
+            if escrow is not None and project.repo not in escrow.repos:
+                escrow.repos.append(project.repo)
+            notify(f"✅ Treasury open: {yocto_to_near(treasury.get('balance', 0))} NEAR, funded by Mend.")
+            self._continue(telegram_id, project, pending["then"])
+
+        self.run_async(telegram_id, "funding", work, notify)
+
+    def wallet_funded(self, telegram_id: str, repo: str, then: str, account_id: str) -> Dict[str, Any]:
+        """Called by the wallet page. Trusts nothing it is told: reads the treasury from the chain."""
+        escrow = self.orchestrator.escrow
+        project = self.settings.project_by_repo(repo)
+        if escrow is None or project is None or project.owner_telegram_id != telegram_id:
+            raise ServiceError("This link does not match a repository you connected.")
+        on_chain = escrow.get_repo(repo)
+        if not on_chain:
+            raise ServiceError("The treasury is not on-chain yet. Wait a few seconds and try again.")
+        if on_chain["owner"] != account_id:
+            raise ServiceError(f"The treasury for {repo} is owned by {on_chain['owner']}, not {account_id}.")
+        if on_chain.get("operator") != escrow.account_id("operator") or not on_chain.get("guard_agent"):
+            raise ServiceError("The treasury exists but does not allow Mend's agents. Re-open the wallet link.")
+        first_time = project.near_owner != account_id
+        project.near_owner = account_id
+        self._save(project)
+        self.accounts.set_near_account(telegram_id, account_id)
+        if repo not in escrow.repos:
+            escrow.repos.append(repo)
+        for key, value in list(self._fund_choices.items()):
+            if value["repo"] == repo:
+                self._fund_choices.pop(key, None)
+        if first_time:
+            user = self.accounts.get(telegram_id)
+            chat_id = user.chat_id if user else telegram_id
+            self.send(chat_id, (f"✅ Treasury for <b>{repo}</b> funded from your wallet <code>{account_id}</code>: "
+                                f"{yocto_to_near(on_chain['balance'])} NEAR. You will approve payouts with this wallet."))
+            notify = lambda text: self.send(chat_id, text)
+            self.run_async(telegram_id, "continue", lambda: self._continue(telegram_id, project, then), notify)
+        return {"repo": repo, "owner": account_id, "balance": on_chain["balance"]}
+
+    def _continue(self, telegram_id: str, project: Project, then: str) -> None:
+        user = self.accounts.get(telegram_id)
+        chat_id = user.chat_id if user else telegram_id
+        notify = lambda text: self.send(chat_id, text)
+        if then == "try":
+            self.crash_demo(telegram_id, project, notify)
+
+    def _save(self, project: Project) -> None:
+        from mend.connect import save_connected
+        save_connected(self.settings, project)
 
     # -- /watch ------------------------------------------------------------
 
@@ -245,6 +356,7 @@ class HostedService:
                 "Keep the token private: it lets an app report crashes for this repository only. "
                 "When your app crashes, the fix comes here for your approval and arrives as a pull request."
             )
+            self.offer_funding(telegram_id, result["project"], then="watch")
 
         self.run_async(telegram_id, "/watch", work, notify)
 
@@ -254,13 +366,24 @@ class HostedService:
         user = self.accounts.get(telegram_id)
         lines = [f"GitHub: <b>{user.github_login}</b>" if user and user.github_login else "GitHub: not connected (/connect)"]
         escrow = self.orchestrator.escrow
+        wallet = self.accounts.near_account(telegram_id)
+        if wallet and escrow is not None:
+            try:
+                account = escrow.rpc.view_account(wallet)
+                balance = yocto_to_near(account["amount"]) if account else "account not found"
+            except NearError:
+                balance = "unavailable right now"
+            lines.append(f"NEAR wallet: <code>{wallet}</code>, balance {balance} NEAR")
+        else:
+            lines.append("NEAR wallet: none linked (choose “Use my NEAR wallet” when funding a treasury)")
         for project in self.projects_of(telegram_id):
             line = f"• <b>{project.repo}</b>"
             if escrow is not None and project.repo in escrow.repos:
                 try:
                     repo = escrow.get_repo(project.repo) or {}
+                    funded_by = f"your wallet {project.near_owner}" if project.near_owner else "Mend"
                     line += (f": {yocto_to_near(repo.get('balance', 0))} NEAR free, "
-                             f"{yocto_to_near(repo.get('total_paid', 0))} paid to agents")
+                             f"{yocto_to_near(repo.get('total_paid', 0))} paid to agents, funded by {funded_by}")
                 except NearError:
                     line += ": treasury unreachable right now"
             lines.append(line)

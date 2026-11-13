@@ -48,6 +48,7 @@ class MendServer(ThreadingHTTPServer):
         super().__init__((settings.host, settings.port), MendHandler)
         self.settings = settings
         self.orchestrator = orchestrator
+        self.hosted = None  # HostedService on a public server
         self._chain_cache: Tuple[float, Optional[Dict[str, Any]]] = (0.0, None)
         self._chain_lock = threading.Lock()
 
@@ -143,6 +144,9 @@ class MendHandler(BaseHTTPRequestHandler):
         path = self.path.split("?", 1)[0]
         orchestrator = self.server.orchestrator
 
+        if path in ("/wallet", "/static/wallet.bundle.js", "/static/wallet.css") or path.startswith("/api/v1/wallet/"):
+            self._wallet_get(path)
+            return
         if path == "/health":
             self._json(200, {"status": "ok"})
             return
@@ -201,11 +205,138 @@ class MendHandler(BaseHTTPRequestHandler):
                 return project
         return None
 
+    # -- wallet page: no admin token; each request carries a signed link ------
+
+    WEB = Path(__file__).resolve().parent / "web"
+    ACCOUNT_ID = re.compile(r"^(?=.{2,64}$)([a-z0-9]+[-_])*[a-z0-9]+(\.([a-z0-9]+[-_])*[a-z0-9]+)*$")
+
+    def _wallet_token(self, token: str) -> Optional[Dict[str, Any]]:
+        from mend.links import read_token
+        return read_token(self.server.settings.secret_key, token) if self.server.hosted else None
+
+    def _query(self) -> Dict[str, str]:
+        from urllib.parse import parse_qs, urlsplit
+        return {k: v[0] for k, v in parse_qs(urlsplit(self.path).query).items()}
+
+    def _wallet_get(self, path: str) -> None:
+        if self.server.hosted is None:
+            self._json(404, {"error": "Not found"})
+            return
+        static = {"/wallet": ("wallet.html", "text/html; charset=utf-8"),
+                  "/static/wallet.bundle.js": ("wallet.bundle.js", "application/javascript"),
+                  "/static/wallet.css": ("wallet.css", "text/css")}
+        if path in static:
+            name, kind = static[path]
+            body = (self.WEB / name).read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", kind)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store" if name.endswith(".html") else "public, max-age=3600")
+            if name.endswith(".html"):
+                self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; "
+                                 "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; "
+                                 "img-src * data:; connect-src *; frame-src *")
+                self.send_header("Referrer-Policy", "no-referrer")
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        query = self._query()
+        escrow = self.server.orchestrator.escrow
+        if path == "/api/v1/wallet/account":
+            account_id = query.get("id", "")
+            if not self.ACCOUNT_ID.match(account_id) or escrow is None:
+                self._json(400, {"error": "Invalid account id"})
+                return
+            try:
+                account = escrow.rpc.view_account(account_id)
+            except NearError as exc:
+                self._json(502, {"error": str(exc)})
+                return
+            self._json(200, {"account_id": account_id, "exists": bool(account),
+                             "balance": account["amount"] if account else "0"})
+            return
+        if path == "/api/v1/wallet/context":
+            body = self._wallet_token(query.get("t", ""))
+            if body is None or escrow is None:
+                self._json(403, {"error": "This link is invalid or has expired. Ask the bot for a new one."})
+                return
+            self._json(200, self._wallet_context(body, escrow))
+            return
+        self._json(404, {"error": "Not found"})
+
+    def _wallet_context(self, body: Dict[str, Any], escrow: Any) -> Dict[str, Any]:
+        from mend.hosted import FAUCET_URL, WALLET_DEPOSIT_NEAR
+        from mend.integrations.near import near_to_yocto
+        settings = self.server.settings
+        base = {"kind": body["k"], "network": escrow.network, "contract_id": escrow.contract_id,
+                "faucet": FAUCET_URL, "explorer": escrow.rpc.explorer}
+        if body["k"] == "fund":
+            existing = escrow.get_repo(body["r"])
+            return dict(base, repo=body["r"], already_owner=(existing or {}).get("owner"),
+                        deposit=str(near_to_yocto(WALLET_DEPOSIT_NEAR)), deposit_near=WALLET_DEPOSIT_NEAR,
+                        max_bounty=str(near_to_yocto(settings.max_bounty_near)), bounty_near=settings.bounty_near,
+                        operator=escrow.account_id("operator"), recon=escrow.account_id("recon"),
+                        guard=escrow.account_id("guard"),
+                        forges=[escrow.forge_account_id("rules"), escrow.forge_account_id("llm")])
+        incident = self.server.orchestrator.store.get(body.get("i", "")) or {}
+        if not incident or incident.get("owner_telegram_id") != body.get("u"):
+            return dict(base, kind="error", error="Incident not found")
+        winner = next((c for c in incident["candidates"] if c["strategy"] == incident.get("winner")), None)
+        return dict(base, incident_id=incident["incident_id"], status=incident["status"], repo=incident["repo"],
+                    near_owner=incident.get("near_owner"), bounty_near=incident["bounty_near"],
+                    error=f"{incident['error_type']}: {incident['error_message']}",
+                    location=f"{incident['rel_path']}:{incident['line_number']}",
+                    forge=escrow.forge_account_id(winner["strategy"]) if winner else None,
+                    patch_hash=winner["patch_hash"] if winner else None,
+                    rationale=winner["rationale"] if winner else "", diff=winner["diff"] if winner else "",
+                    score=(winner.get("guard") or {}).get("score") if winner else None,
+                    pr_url=(incident.get("resolution") or {}).get("pr_url"))
+
+    def _wallet_post(self, path: str, data: Dict[str, Any]) -> None:
+        hosted = self.server.hosted
+        body = self._wallet_token(str(data.get("t", "")))
+        account_id = str(data.get("account_id", ""))
+        if hosted is None or body is None:
+            self._json(403, {"error": "This link is invalid or has expired. Ask the bot for a new one."})
+            return
+        if not self.ACCOUNT_ID.match(account_id):
+            self._json(400, {"error": "Invalid NEAR account"})
+            return
+        from mend.hosted import ServiceError
+        try:
+            if path == "/api/v1/wallet/funded" and body["k"] == "fund":
+                self._json(200, hosted.wallet_funded(body["u"], body["r"], body.get("then", ""), account_id))
+            elif path == "/api/v1/wallet/approved" and body["k"] == "approve":
+                tx_hash = self._verified_tx(str(data.get("tx_hash", "")), account_id)
+                incident = self.server.orchestrator.finalize_wallet_approval(body["i"], account_id, tx_hash)
+                self._json(200, {"status": incident["status"], "pr_url": (incident.get("resolution") or {}).get("pr_url")})
+            else:
+                self._json(404, {"error": "Not found"})
+        except (ServiceError, IncidentError) as exc:
+            self._json(409, {"error": str(exc)})
+
+    def _verified_tx(self, tx_hash: str, account_id: str) -> str:
+        """Keeps a transaction hash only if the chain confirms it was signed by `account_id`."""
+        escrow = self.server.orchestrator.escrow
+        if not tx_hash or not re.fullmatch(r"[1-9A-HJ-NP-Za-km-z]{40,50}", tx_hash) or escrow is None:
+            return ""
+        try:
+            result = escrow.rpc.call("tx", {"tx_hash": tx_hash, "sender_account_id": account_id, "wait_until": "NONE"})
+        except NearError:
+            return ""
+        tx = result.get("transaction") or {}
+        return tx_hash if tx.get("signer_id") == account_id and tx.get("receiver_id") == escrow.contract_id else ""
+
     def do_POST(self) -> None:
         if not self._host_allowed() or not self._same_origin():
             self._json(403, {"error": "Cross-origin request refused"})
             return
         path = self.path.split("?", 1)[0]
+        if path in ("/api/v1/wallet/funded", "/api/v1/wallet/approved"):
+            data = self._read_json()
+            if data is not None:
+                self._wallet_post(path, data)
+            return
         project_scope = None
         if not self._authorized():
             project_scope = self._project_for_token() if path == "/api/v1/incidents" else None
@@ -256,15 +387,17 @@ def build(settings: Settings) -> Tuple[MendServer, SwarmOrchestrator, Optional[T
         from mend.accounts import AccountStore, Vault
         accounts = AccountStore(settings.db_path, Vault(settings.secret_key))
     orchestrator = SwarmOrchestrator(settings, escrow=escrow, accounts=accounts)
+    hosted = None
+    if accounts is not None:
+        from mend.hosted import HostedService
+        hosted = HostedService(settings, orchestrator, accounts)
     bot: Optional[TelegramBot] = None
     if settings.telegram_token:
-        hosted = None
-        if accounts is not None:
-            from mend.hosted import HostedService
-            hosted = HostedService(settings, orchestrator, accounts)
         bot = TelegramBot(settings.telegram_token, settings.telegram_chat_id, settings.telegram_approver_ids,
                           orchestrator, hosted=hosted)
-    return MendServer(settings, orchestrator), orchestrator, bot
+    server = MendServer(settings, orchestrator)
+    server.hosted = hosted
+    return server, orchestrator, bot
 
 
 def serve(settings: Optional[Settings] = None) -> None:

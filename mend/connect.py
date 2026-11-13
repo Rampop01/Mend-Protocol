@@ -94,7 +94,7 @@ def detect_test_command(root: Path) -> List[str]:
     raise ConnectError("Could not find a test suite. Pass --test-command to say how to run the tests.")
 
 
-def _save_connected(settings: Settings, project: Project) -> None:
+def save_connected(settings: Settings, project: Project) -> None:
     path = settings.connected_projects_file
     data: Dict[str, Any] = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {"projects": []}
     entries = [e for e in data.get("projects", []) if e.get("repo", "").lower() != project.repo.lower()]
@@ -106,6 +106,7 @@ def _save_connected(settings: Settings, project: Project) -> None:
         "base_branch": project.base_branch,
         "owner_telegram_id": project.owner_telegram_id,
         "ingest_token_hash": project.ingest_token_hash,
+        "near_owner": project.near_owner,
     })
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({"projects": entries}, indent=2) + "\n", encoding="utf-8")
@@ -161,7 +162,7 @@ def connect_repo(
             "Pass --test-command to set it."
         )
     log(f"{baseline.tests_run - baseline.tests_failed}/{baseline.tests_run} tests pass on {branch} at {commit[:7]}")
-    _save_connected(settings, project)
+    save_connected(settings, project)
     # Make the project live for a running server without a restart.
     settings.projects = [p for p in settings.projects if p.repo.lower() != project.repo.lower()] + [project]
 

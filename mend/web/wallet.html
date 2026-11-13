@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mend · NEAR wallet</title>
+<link rel="stylesheet" href="/static/wallet.css">
+<style>
+  :root { --bg:#07090b; --panel:#10151a; --line:#24302f; --text:#eef2f4; --muted:#93a0ab; --g:#00ec97; --bad:#ff6b6b; }
+  * { box-sizing: border-box; }
+  body { margin:0; min-height:100vh; background:radial-gradient(900px 500px at 70% 0%, #0f2a22 0%, var(--bg) 60%); color:var(--text);
+         font:16px/1.5 -apple-system, "Segoe UI", Inter, sans-serif; display:flex; justify-content:center; padding:28px 16px; }
+  main { width:100%; max-width:560px; }
+  .brand { display:flex; align-items:center; gap:10px; font-weight:700; font-size:20px; margin-bottom:18px; }
+  .dot { width:16px; height:16px; border-radius:5px; background:var(--g); box-shadow:0 0 24px #00ec9766; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:16px; padding:20px; margin-bottom:14px; }
+  h1 { font-size:22px; margin:0 0 6px; } h1 em { color:var(--g); font-style:normal; }
+  .muted { color:var(--muted); font-size:14px; } .mono { font-family:ui-monospace, Menlo, monospace; font-size:13px; word-break:break-all; }
+  .row { display:flex; justify-content:space-between; gap:12px; padding:7px 0; border-bottom:1px solid var(--line); font-size:14px; }
+  .row:last-child { border-bottom:0; } .row b { font-weight:600; text-align:right; }
+  button, a.btn { display:block; width:100%; text-align:center; font:600 16px/1 inherit; border-radius:12px; padding:15px; cursor:pointer;
+                  border:1px solid var(--line); background:transparent; color:var(--text); text-decoration:none; margin-top:10px; }
+  button.primary { background:var(--g); border-color:var(--g); color:#04130c; }
+  button:disabled { opacity:.5; cursor:default; }
+  .ok { color:var(--g); } .err { color:var(--bad); }
+  pre { background:#0a0d10; border:1px solid var(--line); border-radius:10px; padding:10px; font:12px/1.5 ui-monospace, Menlo, monospace; overflow:auto; max-height:260px; margin:10px 0 0; }
+  .add { color:var(--g); } .del { color:var(--bad); }
+  .steps { font-size:14px; color:var(--muted); padding-left:18px; margin:8px 0 0; }
+  .hidden { display:none; }
+</style>
+</head>
+<body>
+<main>
+  <div class="brand"><div class="dot"></div>Mend Protocol <span class="muted" style="font-weight:400">· NEAR wallet</span></div>
+  <div id="app"><div class="card muted">Loading…</div></div>
+</main>
+<script src="/static/wallet.bundle.js"></script>
+<script>
+"use strict";
+const params = new URLSearchParams(location.search);
+const TOKEN = params.get("t") || "";
+const app = document.getElementById("app");
+let ctx = null, selector = null, modal = null, account = null, busy = false, message = "";
+
+const el = (tag, attrs, ...kids) => {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (k === "class") n.className = v; else if (k.startsWith("on")) n[k] = v; else n.setAttribute(k, v);
+  }
+  for (const kid of kids.flat()) if (kid != null && kid !== false) n.append(kid.nodeType ? kid : document.createTextNode(String(kid)));
+  return n;
+};
+const near = (yocto) => {
+  const s = String(yocto || "0").padStart(25, "0");
+  const frac = s.slice(-24).slice(0, 4).replace(/0+$/, "");
+  return BigInt(s.slice(0, -24)).toString() + (frac ? "." + frac : "");
+};
+const link = (href, text) => /^https:\/\//.test(href || "") ? el("a", { href, target: "_blank", rel: "noopener", class: "ok" }, text) : text;
+
+async function api(path, body) {
+  const res = await fetch(path, body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {});
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
+  return data;
+}
+
+async function refreshAccount() {
+  const accounts = selector ? selector.store.getState().accounts : [];
+  if (!accounts.length) { account = null; return render(); }
+  const id = accounts[0].accountId;
+  try {
+    const info = await api("/api/v1/wallet/account?id=" + encodeURIComponent(id));
+    account = { id, balance: info.balance, exists: info.exists };
+  } catch (e) { account = { id, balance: null }; }
+  render();
+}
+
+function walletCard() {
+  if (!account) {
+    return el("div", { class: "card" },
+      el("div", { class: "muted" }, "Connect a NEAR " + ctx.network + " wallet: Meteor, MyNearWallet or Intear."),
+      el("button", { class: "primary", onclick: () => modal.show() }, "Connect NEAR wallet"),
+      el("div", { class: "muted", style: "margin-top:12px" }, "No wallet yet? ",
+        link("https://wallet.meteorwallet.app", "Create one with Meteor"), " (choose testnet), then get free testnet NEAR from the ",
+        link(ctx.faucet, "NEAR faucet"), "."));
+  }
+  const balance = account.balance == null ? "unavailable" : near(account.balance) + " NEAR";
+  return el("div", { class: "card" },
+    el("div", { class: "row" }, el("span", {}, "Wallet"), el("b", { class: "mono" }, account.id)),
+    el("div", { class: "row" }, el("span", {}, "Balance (" + ctx.network + ")"), el("b", {}, balance)),
+    el("button", { onclick: async () => { const w = await selector.wallet(); await w.signOut(); account = null; render(); } }, "Use a different wallet"));
+}
+
+async function signAndSend(actions) {
+  const wallet = await selector.wallet();
+  const outcome = await wallet.signAndSendTransaction({ signerId: account.id, receiverId: ctx.contract_id, actions });
+  return outcome && outcome.transaction ? outcome.transaction.hash : "";
+}
+
+async function fund() {
+  busy = true; message = "Waiting for your wallet…"; render();
+  const { functionCall } = MendWallet.actionCreators;
+  const gas = BigInt("30000000000000");
+  try {
+    if (!ctx.already_owner) {
+      await signAndSend([
+        functionCall("register_repo", { repo_id: ctx.repo, operator: ctx.operator, max_bounty: ctx.max_bounty }, gas, BigInt(ctx.deposit)),
+        functionCall("set_agents", { repo_id: ctx.repo, recon_agent: ctx.recon, guard_agent: ctx.guard, forge_agents: ctx.forges }, gas, BigInt(0)),
+      ]);
+    }
+    await confirmFunded();
+  } catch (e) { busy = false; message = "⚠️ " + (e.message || e); render(); }
+}
+
+async function confirmFunded() {
+  message = "Checking the treasury on NEAR…"; render();
+  for (let i = 0; i < 6; i++) {
+    try {
+      await api("/api/v1/wallet/funded", { t: TOKEN, account_id: account.id });
+      busy = false; message = "done"; return render();
+    } catch (e) {
+      if (i === 5) throw e;
+      await new Promise(r => setTimeout(r, 2500));
+    }
+  }
+}
+
+async function approve() {
+  busy = true; message = "Waiting for your wallet…"; render();
+  const { functionCall } = MendWallet.actionCreators;
+  try {
+    const hash = await signAndSend([functionCall("approve", { incident_id: ctx.incident_id, forge: ctx.forge, patch_hash: ctx.patch_hash },
+                                                 BigInt("100000000000000"), BigInt(0))]);
+    await confirmApproved(hash);
+  } catch (e) { busy = false; message = "⚠️ " + (e.message || e); render(); }
+}
+
+async function confirmApproved(hash) {
+  message = "Confirming the payout on NEAR…"; render();
+  for (let i = 0; i < 6; i++) {
+    try {
+      const res = await api("/api/v1/wallet/approved", { t: TOKEN, account_id: account.id, tx_hash: hash || "" });
+      ctx.pr_url = res.pr_url; ctx.status = res.status; busy = false; message = "done"; return render();
+    } catch (e) {
+      if (i === 5) throw e;
+      await new Promise(r => setTimeout(r, 2500));
+    }
+  }
+}
+
+function fundView() {
+  const enough = account && account.balance != null && BigInt(account.balance) > BigInt(ctx.deposit) + BigInt("50000000000000000000000");
+  const owned = ctx.already_owner;
+  const action = el("div", { class: "card" },
+    el("div", { class: "row" }, el("span", {}, "Deposit into the treasury"), el("b", {}, ctx.deposit_near + " NEAR")),
+    el("div", { class: "row" }, el("span", {}, "Bounty per fix"), el("b", {}, ctx.bounty_near + " NEAR")),
+    el("div", { class: "row" }, el("span", {}, "Contract"), el("b", { class: "mono" }, ctx.contract_id)),
+    el("ol", { class: "steps" },
+      el("li", {}, "Opens a treasury for ", el("b", {}, ctx.repo), " with your wallet as the owner."),
+      el("li", {}, "Allows Mend's agents (recon, two forges, guard) to work on it. Mend's operator can open incidents but can never pay out."),
+      el("li", {}, "Every payout needs your wallet's signature. Unused NEAR can be withdrawn by you at any time.")),
+    message === "done"
+      ? el("div", { class: "ok", style: "margin-top:12px;font-weight:600" }, "✅ Treasury funded from " + account.id + ". Go back to Telegram.")
+      : owned && account && owned !== account.id
+        ? el("div", { class: "err", style: "margin-top:12px" }, "This treasury is owned by " + owned + ". Connect that wallet.")
+        : el("button", { class: "primary", disabled: (!account || busy || (!owned && !enough)) ? "" : null, onclick: fund },
+             !account ? "Connect a wallet first" : owned ? "Confirm my treasury" :
+             enough ? "Fund treasury with " + ctx.deposit_near + " NEAR" : "Not enough testnet NEAR: use the faucet"),
+    message && message !== "done" ? el("div", { class: "muted", style: "margin-top:10px" }, message) : null);
+  return [el("div", { class: "card" }, el("h1", {}, "Fund your ", el("em", {}, "bounty treasury")),
+            el("div", { class: "muted" }, "Mend's agents are paid from this treasury on NEAR, only when you approve a fix.")),
+          walletCard(), action];
+}
+
+function approveView() {
+  const diff = el("pre", {}, (ctx.diff || "").split("\n").map(l =>
+    el("div", { class: l[0] === "+" && !l.startsWith("+++") ? "add" : l[0] === "-" && !l.startsWith("---") ? "del" : "" }, l || " ")));
+  const wrongWallet = account && ctx.near_owner && account.id !== ctx.near_owner;
+  const done = ctx.status === "RESOLVED" || message === "done";
+  return [
+    el("div", { class: "card" }, el("h1", {}, "Approve the fix and ", el("em", {}, "pay the agents")),
+      el("div", { class: "row" }, el("span", {}, "Repository"), el("b", {}, ctx.repo)),
+      el("div", { class: "row" }, el("span", {}, "Crash"), el("b", { class: "mono" }, ctx.error)),
+      el("div", { class: "row" }, el("span", {}, "Location"), el("b", { class: "mono" }, ctx.location)),
+      el("div", { class: "row" }, el("span", {}, "Guard score"), el("b", {}, (ctx.score ?? "?") + " / 100")),
+      el("div", { class: "row" }, el("span", {}, "Bounty"), el("b", {}, ctx.bounty_near + " NEAR · 70% fixer · 15% guard · 15% recon")),
+      el("div", { class: "muted", style: "margin-top:8px" }, ctx.rationale), diff),
+    walletCard(),
+    el("div", { class: "card" },
+      done ? el("div", { class: "ok", style: "font-weight:600" }, "✅ Approved and paid on NEAR.",
+               ctx.pr_url ? el("div", {}, "Pull request: ", link(ctx.pr_url, ctx.pr_url)) : null,
+               el("div", { class: "muted" }, "You can go back to Telegram."))
+      : ctx.status !== "AWAITING_APPROVAL" ? el("div", { class: "muted" }, "This incident is " + ctx.status.toLowerCase().replace("_", " ") + ".")
+      : wrongWallet ? el("div", { class: "err" }, "This treasury belongs to " + ctx.near_owner + ". Connect that wallet to approve.")
+      : el("button", { class: "primary", disabled: (!account || busy) ? "" : null, onclick: approve },
+           account ? "Approve and pay " + ctx.bounty_near + " NEAR" : "Connect a wallet first"),
+      message && message !== "done" ? el("div", { class: "muted", style: "margin-top:10px" }, message) : null)];
+}
+
+function render() {
+  if (!ctx) return;
+  if (ctx.kind === "error") { app.replaceChildren(el("div", { class: "card err" }, ctx.error)); return; }
+  app.replaceChildren(...(ctx.kind === "fund" ? fundView() : approveView()));
+}
+
+(async () => {
+  try {
+    ctx = await api("/api/v1/wallet/context?t=" + encodeURIComponent(TOKEN));
+    ({ selector, modal } = await MendWallet.connect(ctx.network, ctx.contract_id));
+    selector.store.observable.subscribe(() => refreshAccount());
+    await refreshAccount();
+    // Redirect wallets (MyNearWallet) come back with the transaction hash in the URL.
+    const returned = params.get("transactionHashes");
+    if (returned && account) {
+      busy = true;
+      if (ctx.kind === "fund") await confirmFunded(); else await confirmApproved(returned.split(",").pop());
+    }
+    if (params.get("errorCode")) { message = "⚠️ The wallet did not sign (" + params.get("errorCode") + ")."; render(); }
+  } catch (e) {
+    app.replaceChildren(el("div", { class: "card err" }, e.message || String(e)));
+  }
+})();
+</script>
+</body>
+</html>

@@ -52,6 +52,8 @@ class TelegramBot:
         self._in_flight_lock = threading.Lock()
         # On a public service, anyone may use the bot; each incident belongs to one user.
         self.hosted = hosted
+        if hosted is not None:
+            hosted.send = lambda chat_id, text, keyboard=None: self.send(chat_id, text, keyboard)
         orchestrator.listeners.append(self.on_incident)
 
     # ------------------------------------------------------------------
@@ -166,10 +168,14 @@ class TelegramBot:
                 if chain["enabled"] else f"ℹ️ No on-chain escrow: {esc(chain.get('error') or 'not configured')}"
             )
             label = (f"✅ Approve and release {incident['bounty_near']} NEAR" if chain["enabled"] else "✅ Approve fix")
-            keyboard = [
-                [{"text": label, "callback_data": f"approve:{incident['incident_id']}"}],
-                [{"text": "❌ Reject", "callback_data": f"reject:{incident['incident_id']}"}],
-            ]
+            approve: Dict[str, str] = {"text": label, "callback_data": f"approve:{incident['incident_id']}"}
+            if incident.get("near_owner") and chain["enabled"] and self.hosted is not None:
+                # The treasury is the user's: the payout must be signed by their wallet, not by Mend.
+                link = self.hosted.wallet_link({"k": "approve", "u": incident.get("owner_telegram_id", ""),
+                                                "i": incident["incident_id"]}, ttl=86400)
+                approve = {"text": f"✅ Approve with NEAR wallet ({incident['bounty_near']} NEAR)", "url": link}
+                escrow += f"\n🔐 Your wallet <code>{esc(incident['near_owner'])}</code> signs the payout."
+            keyboard = [[approve], [{"text": "❌ Reject", "callback_data": f"reject:{incident['incident_id']}"}]]
             return f"🛠 <b>Fix ready for review</b>\n\n{head}\n\n{body}\n\n{escrow}", keyboard
 
         if status == "REJECTED":
@@ -223,6 +229,16 @@ class TelegramBot:
         if action == "cmd" and self.hosted is not None:
             self.api("answerCallbackQuery", {"callback_query_id": query.get("id")})
             self._public_command("/" + incident_id, "", chat_id, user)
+            return
+        if action == "fund" and self.hosted is not None:
+            self.api("answerCallbackQuery", {"callback_query_id": query.get("id"), "text": "Opening your treasury…"})
+            if message.get("message_id"):
+                self.api("editMessageReplyMarkup", {"chat_id": chat_id, "message_id": message["message_id"],
+                                                    "reply_markup": {"inline_keyboard": []}})
+            try:
+                self.hosted.fund_with_mend(incident_id, str(user.get("id")), lambda text: self.send(chat_id, text))
+            except Exception as exc:
+                self.send(chat_id, f"⚠️ {esc(exc)}")
             return
         if action not in ("approve", "reject") or not incident_id:
             self.api("answerCallbackQuery", {"callback_query_id": query.get("id")})

@@ -21,4 +21,4 @@ mend = "mend.cli:main"
 include = ["mend*"]
 
 [tool.setuptools.package-data]
-mend = ["web/*.html", "contract/*.wasm"]
+mend = ["web/*.html", "web/*.js", "web/*.css", "contract/*.wasm"]

@@ -110,6 +110,19 @@ class PublicServiceTests(unittest.TestCase):
     def texts(self, chat_id):
         return [d.get("text", "") for m, d in self.sent if m in ("sendMessage", "editMessageText") and str(d.get("chat_id")) == str(chat_id)]
 
+    def choose_mend_funding(self, user_id):
+        """Taps "Let Mend fund it" on the funding message."""
+        def button():
+            for m, d in self.sent:
+                for row in (d.get("reply_markup") or {}).get("inline_keyboard", []):
+                    for b in row:
+                        if str(b.get("callback_data", "")).startswith("fund:") and str(d.get("chat_id")) == str(user_id):
+                            return b["callback_data"]
+            return None
+        self.assertTrue(self.wait_for(lambda: button() is not None), self.texts(user_id))
+        self.bot.handle_callback({"id": "q", "data": button(), "from": {"id": user_id},
+                                  "message": {"chat": {"id": user_id}, "message_id": 3}})
+
     def wait_for(self, predicate, timeout=60):
         end = time.time() + timeout
         while time.time() < end:
@@ -128,6 +141,7 @@ class PublicServiceTests(unittest.TestCase):
 
         self.accounts.set_github("111", "alice", "alice:token")
         self.say(111, "/try")
+        self.choose_mend_funding(111)
         self.assertTrue(self.wait_for(lambda: any("Incident" in t and "opened" in t for t in self.texts(111))),
                         self.texts(111))
         self.orch.wait_idle()
@@ -189,6 +203,7 @@ class OwnerTriesOwnDemo(PublicServiceTests):
         import mend.hosted
         self.accounts.set_github("111", mend.hosted.DEMO_UPSTREAM.split("/")[0], "Rampop01:token")
         self.say(111, "/try")
+        self.choose_mend_funding(111)
         self.assertTrue(self.wait_for(lambda: any("opened" in t for t in self.texts(111))), self.texts(111))
         self.assertEqual(self.orch.store.list(1)[0]["repo"], mend.hosted.DEMO_UPSTREAM)
 
@@ -229,3 +244,50 @@ class SignInAndLegacyButtons(unittest.TestCase):
         # Trying the demo meanwhile reminds the user of their code.
         self.bot.handle_message({"chat": {"id": 7, "type": "private"}, "from": {"id": 7}, "text": "/try"})
         self.assertIn("ABCD-1234", self.sent[-1][1]["text"])
+
+
+class WalletOwnedTreasury(PublicServiceTests):
+    def test_the_users_wallet_funds_and_approves_and_telegram_taps_cannot(self):
+        self.settings.public_url = "https://mend.example"
+        self.settings.secret_key = "k" * 32
+        self.accounts.set_github("111", "alice", "alice:token")
+        self.say(111, "/try")
+        funding = lambda: next((d for m, d in self.sent if "Fund the bounty treasury" in d.get("text", "")), None)
+        self.assertTrue(self.wait_for(lambda: funding() is not None), self.texts(111))
+        wallet_button = funding()["reply_markup"]["inline_keyboard"][0][0]
+        self.assertTrue(wallet_button["url"].startswith("https://mend.example/wallet?t="))
+
+        # The page claims the wallet funded it, but the chain shows nothing yet: refused.
+        from mend.hosted import ServiceError
+        with self.assertRaises(ServiceError):
+            self.hosted.wallet_funded("111", "alice/mend-demo-shop", "try", "alice.testnet")
+        # Someone else's account owns the treasury: refused.
+        self.escrow.register("alice/mend-demo-shop", owner="mallory.testnet")
+        with self.assertRaises(ServiceError):
+            self.hosted.wallet_funded("111", "alice/mend-demo-shop", "try", "alice.testnet")
+        # Alice's wallet really funded it: accepted, and the demo continues.
+        self.escrow.register("alice/mend-demo-shop", owner="alice.testnet")
+        self.hosted.wallet_funded("111", "alice/mend-demo-shop", "try", "alice.testnet")
+        self.assertTrue(self.wait_for(lambda: any("opened" in t for t in self.texts(111))), self.texts(111))
+        self.orch.wait_idle()
+        incident = self.orch.store.list(1)[0]
+        self.assertEqual(incident["near_owner"], "alice.testnet")
+
+        card = next(d for m, d in reversed(self.sent) if "Fix ready for review" in d.get("text", ""))
+        approve = card["reply_markup"]["inline_keyboard"][0][0]
+        self.assertIn("/wallet?t=", approve["url"])  # a wallet signature, not a Telegram tap
+        from mend.swarm.orchestrator import IncidentError
+        with self.assertRaises(IncidentError):
+            self.orch.approve(incident["incident_id"], "telegram")
+
+        # Before the wallet signs, finalising is refused; after the chain shows the payout, the PR is opened.
+        with self.assertRaises(IncidentError):
+            self.orch.finalize_wallet_approval(incident["incident_id"], "alice.testnet", "tx1")
+        winner = next(c for c in incident["candidates"] if c["strategy"] == incident["winner"])
+        self.escrow.approve(incident["incident_id"], winner["strategy"], winner["patch_hash"])
+        with self.assertRaises(IncidentError):
+            self.orch.finalize_wallet_approval(incident["incident_id"], "mallory.testnet", "tx1")
+        done = self.orch.finalize_wallet_approval(incident["incident_id"], "alice.testnet", "tx1")
+        self.assertEqual(done["status"], "RESOLVED")
+        self.assertEqual(done["resolution"]["pr_url"], "https://github.com/alice/mend-demo-shop/pull/1")
+        self.assertEqual(done["resolution"]["settlement"]["signer_id"], "alice.testnet")

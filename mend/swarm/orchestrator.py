@@ -200,6 +200,7 @@ class SwarmOrchestrator:
             "telegram": None,
             "owner_telegram_id": owner,
             "chat_id": chat_id,
+            "near_owner": project.near_owner,
             "pull_request": None,
         }
         self._note(incident, "sdk", f"Crash received: {error_type} at {rel_path}:{line_number}")
@@ -398,6 +399,8 @@ class SwarmOrchestrator:
             project = self.settings.project_by_repo(incident["repo"])
             if project is None:
                 raise IncidentError(f"Project {incident['repo']} is no longer registered")
+            if incident.get("near_owner") and incident["chain"]["enabled"]:
+                raise IncidentError(f"This treasury belongs to {incident['near_owner']}: approve by signing with that NEAR wallet")
             winner = next(c for c in incident["candidates"] if c["strategy"] == incident["winner"])
             target = project.root / incident["rel_path"]
 
@@ -477,6 +480,64 @@ class SwarmOrchestrator:
                 self._note(incident, "operator", f"Applied the patch to {incident['rel_path']}")
                 self._open_pull_request(incident, project, winner, resolution)
 
+            incident["status"] = "RESOLVED"
+            self.store.save(incident)
+            self._emit(incident, "resolved")
+            return incident
+
+    def finalize_wallet_approval(self, incident_id: str, account_id: str, tx_hash: str = "") -> Dict[str, Any]:
+        """
+        The repository owner signed `approve` with their own wallet. Check the chain, then deliver the fix.
+        Nothing here moves money: the contract already paid, or this raises.
+        """
+        with self._approval_lock:
+            incident = self.store.get(incident_id)
+            if incident is None:
+                raise IncidentError(f"Incident {incident_id} not found")
+            if incident["status"] == "RESOLVED":
+                return incident
+            if incident["status"] != "AWAITING_APPROVAL":
+                raise IncidentError(f"Incident {incident_id} is {incident['status']}")
+            if not incident.get("near_owner") or incident["near_owner"] != account_id:
+                raise IncidentError("This incident's treasury belongs to a different NEAR account")
+            project = self.settings.project_by_repo(incident["repo"])
+            if project is None or self.escrow is None:
+                raise IncidentError(f"Project {incident['repo']} is no longer registered")
+            winner = next(c for c in incident["candidates"] if c["strategy"] == incident["winner"])
+            on_chain = self.escrow.get_incident(incident_id) or {}
+            if on_chain.get("status") != "Resolved":
+                raise IncidentError("The approval is not on-chain yet. Wait a few seconds and try again.")
+            if (on_chain.get("winner") != self.escrow.forge_account_id(winner["strategy"])
+                    or on_chain.get("accepted_patch_hash") != winner["patch_hash"]):
+                raise IncidentError("The on-chain approval does not match the patch Mend verified")
+
+            resolution: Dict[str, Any] = {
+                "approver": account_id, "strategy": winner["strategy"], "patch_hash": winner["patch_hash"],
+                "settlement": {"tx_hash": tx_hash, "explorer_url": self.escrow.rpc.tx_url(tx_hash) if tx_hash
+                               else self.escrow.rpc.account_url(self.escrow.contract_id), "signer_id": account_id},
+                "payouts": self._read_payouts(incident_id), "applied": False, "pr_url": None,
+                "notes": [f"Payout signed by {account_id} with their own NEAR wallet"],
+            }
+            incident["resolution"] = resolution
+            incident["chain"]["txs"].append({"step": "approve", "agent": "owner", "signer": account_id,
+                                             "tx_hash": tx_hash, "explorer_url": resolution["settlement"]["explorer_url"]})
+            self._note(incident, "owner", f"{account_id} approved with their NEAR wallet; {incident['bounty_near']} NEAR released",
+                       tx_url=resolution["settlement"]["explorer_url"])
+            if project.managed:
+                github = self.github_for(project)
+                result = github.open_fix_pull_request(
+                    repo=project.repo, base_branch=project.base_branch, branch=f"mend/{incident_id.lower()}",
+                    rel_path=incident["rel_path"], original_sha256=incident["recon"]["source_sha256"],
+                    patched_source=winner["patched_source"],
+                    title=f"fix: {incident['error_type']} in {incident['rel_path']} ({incident_id})",
+                    body=self._pr_body(incident, winner, resolution),
+                )
+                if result.get("ok"):
+                    incident["pull_request"] = {"url": result["pr_url"], "number": result["pr_number"], "branch": result["branch"]}
+                    resolution["pr_url"] = result["pr_url"]
+                    self._note(incident, "operator", f"Opened pull request #{result['pr_number']}")
+                else:
+                    resolution["notes"].append(f"The bounty was paid, but the pull request failed: {result.get('error')}")
             incident["status"] = "RESOLVED"
             self.store.save(incident)
             self._emit(incident, "resolved")

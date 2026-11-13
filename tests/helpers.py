@@ -116,10 +116,29 @@ class RecordingEscrow:
     network = "testnet"
     contract_id = "escrow.test"
 
+    class _Rpc:
+        def tx_url(self, h): return f"https://example.invalid/txns/{h}"
+        def account_url(self, a): return f"https://example.invalid/address/{a}"
+        def view_account(self, a): return {"amount": str(5 * 10**24)}
+
     def __init__(self, repos: List[str]) -> None:
         self.repos = repos
         self.calls: List[tuple] = []
         self.incidents: Dict[str, Dict[str, Any]] = {}
+        self.treasuries: Dict[str, Dict[str, Any]] = {}
+        self.rpc = RecordingEscrow._Rpc()
+
+    def account_id(self, role: str) -> str:
+        return f"{role}.test"
+
+    def get_repo(self, repo_id):
+        return self.treasuries.get(repo_id)
+
+    def register(self, repo_id, owner="owner.test"):
+        self.treasuries[repo_id] = {"owner": owner, "operator": "operator.test", "guard_agent": "guard.test",
+                                    "balance": str(2 * 10**23), "reserved": "0", "total_paid": "0"}
+        if repo_id not in self.repos:
+            self.repos.append(repo_id)
 
     def forge_account_id(self, strategy: str) -> str:
         return f"forge-{strategy}.test"
@@ -156,6 +175,8 @@ class RecordingEscrow:
         sub = inc["subs"][strategy]
         assert inc["status"] == "Open" and sub["patch_hash"] == patch_hash and sub["attested"] and sub["failed"] == 0
         inc["status"] = "Resolved"
+        inc["winner"] = f"forge-{strategy}.test"
+        inc["accepted_patch_hash"] = patch_hash
         inc["payouts"] = [
             {"account": f"forge-{strategy}.test", "role": "forge", "amount": str(175 * 10**21)},
             {"account": "guard.test", "role": "guard", "amount": str(375 * 10**20)},
@@ -171,7 +192,8 @@ class RecordingEscrow:
 
     def get_incident(self, incident_id):
         inc = self.incidents.get(incident_id)
-        return {"status": inc["status"], "payouts": inc["payouts"]} if inc else None
+        return ({"status": inc["status"], "payouts": inc["payouts"], "winner": inc.get("winner"),
+                 "accepted_patch_hash": inc.get("accepted_patch_hash")} if inc else None)
 
 
 def temp_dir() -> tempfile.TemporaryDirectory:

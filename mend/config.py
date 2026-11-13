@@ -46,6 +46,7 @@ class Project:
     managed: bool = False
     owner_telegram_id: str = ""   # on a public service: the user who connected it
     ingest_token_hash: str = ""   # sha256 of the project's SDK token
+    near_owner: str = ""          # NEAR account that owns the treasury and signs approvals (wallet mode)
 
     def contains(self, path: Path) -> bool:
         try:
@@ -135,6 +136,7 @@ def _parse_projects(path: Path, managed: bool) -> List[Project]:
                 managed=managed,
                 owner_telegram_id=str(entry.get("owner_telegram_id") or ""),
                 ingest_token_hash=str(entry.get("ingest_token_hash") or ""),
+                near_owner=str(entry.get("near_owner") or ""),
             )
         )
     return projects

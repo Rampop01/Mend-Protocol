@@ -96,7 +96,20 @@ class AccountStore:
             );
             """
         )
+        columns = [r[1] for r in self._conn.execute("PRAGMA table_info(users)")]
+        if "near_account" not in columns:
+            self._conn.execute("ALTER TABLE users ADD COLUMN near_account TEXT")
         self._conn.commit()
+
+    def set_near_account(self, telegram_id: str, account_id: str) -> None:
+        with self._lock:
+            self._conn.execute("UPDATE users SET near_account = ? WHERE telegram_id = ?", (account_id, telegram_id))
+            self._conn.commit()
+
+    def near_account(self, telegram_id: str) -> str:
+        with self._lock:
+            row = self._conn.execute("SELECT near_account FROM users WHERE telegram_id = ?", (telegram_id,)).fetchone()
+        return (row[0] or "") if row else ""
 
     def upsert(self, telegram_id: str, chat_id: str, username: str = "") -> None:
         with self._lock:
